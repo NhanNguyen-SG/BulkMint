@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type AnalysisResult = {
@@ -20,6 +20,35 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [inventory, setInventory] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchInventory();
+  }, []);
+
+  async function fetchInventory() {
+    const { data, error } = await supabase
+      .from("cards")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Fetch inventory error:", error);
+      return;
+    }
+
+    const formatted = data.map((card) => ({
+      card_name: card.card_name,
+      set: card.set_name,
+      card_number: card.card_number,
+      rarity: card.rarity,
+      condition_guess: card.condition_guess,
+      suggested_price: card.suggested_price,
+      ebay_title: card.ebay_title,
+      ebay_description: card.ebay_description,
+    }));
+
+    setInventory(formatted);
+  }
 
   function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -48,20 +77,27 @@ export default function Home() {
       });
 
       const data = await response.json();
+
       setResult(data);
       setInventory((prev) => [data, ...prev]);
-await supabase.from("cards").insert([
-  {
-    card_name: data.card_name,
-    set_name: data.set,
-    card_number: data.card_number,
-    rarity: data.rarity,
-    condition_guess: data.condition_guess,
-    suggested_price: data.suggested_price,
-    ebay_title: data.ebay_title,
-    ebay_description: data.ebay_description,
-  },
-]);
+
+      const { error } = await supabase.from("cards").insert([
+        {
+          card_name: data.card_name,
+          set_name: data.set,
+          card_number: data.card_number,
+          rarity: data.rarity,
+          condition_guess: data.condition_guess,
+          suggested_price: data.suggested_price,
+          ebay_title: data.ebay_title,
+          ebay_description: data.ebay_description,
+        },
+      ]);
+
+      if (error) {
+        console.error("Supabase insert error:", error);
+        alert("Supabase save failed. Check console.");
+      }
     } catch (error) {
       alert("Error analyzing card. Make sure backend is running.");
     } finally {
@@ -124,47 +160,40 @@ await supabase.from("cards").insert([
             <p><span className="text-zinc-400">Card Number:</span> {result.card_number}</p>
             <p><span className="text-zinc-400">Condition Guess:</span> {result.condition_guess}</p>
 
-          <div className="mt-5 border-t border-zinc-800 pt-4">
-            <h3 className="font-semibold mb-2">eBay Draft</h3>
-            <p><span className="text-zinc-400">Title:</span> {result.ebay_title}</p>
-            <p className="mt-2"><span className="text-zinc-400">Description:</span> {result.ebay_description}</p>
-</div>
+            <div className="mt-5 border-t border-zinc-800 pt-4">
+              <h3 className="font-semibold mb-2">eBay Draft</h3>
+              <p><span className="text-zinc-400">Title:</span> {result.ebay_title}</p>
+              <p className="mt-2"><span className="text-zinc-400">Description:</span> {result.ebay_description}</p>
+            </div>
           </div>
         )}
+
         {inventory.length > 0 && (
-  <div className="mt-8">
-    <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
 
-    <div className="space-y-4">
-      {inventory.map((card, index) => (
-        <div
-          key={index}
-          className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
-        >
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="font-semibold text-lg">
-                {card.card_name}
-              </p>
+            <div className="space-y-4">
+              {inventory.map((card, index) => (
+                <div
+                  key={index}
+                  className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-semibold text-lg">{card.card_name}</p>
+                      <p className="text-zinc-400">{card.set} • {card.rarity}</p>
+                      <p className="text-green-400 mt-2">{card.suggested_price}</p>
+                    </div>
 
-              <p className="text-zinc-400">
-                {card.set} • {card.rarity}
-              </p>
-
-              <p className="text-green-400 mt-2">
-                {card.suggested_price}
-              </p>
-            </div>
-
-            <div className="text-right text-sm text-zinc-500">
-              #{card.card_number}
+                    <div className="text-right text-sm text-zinc-500">
+                      #{card.card_number}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
-      ))}
-    </div>
-  </div>
-)}
+        )}
       </div>
     </main>
   );
