@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { supabase } from "../lib/supabase";
 
 type AnalysisResult = {
   card_name: string;
@@ -49,6 +50,18 @@ export default function Home() {
       const data = await response.json();
       setResult(data);
       setInventory((prev) => [data, ...prev]);
+await supabase.from("cards").insert([
+  {
+    card_name: data.card_name,
+    set_name: data.set,
+    card_number: data.card_number,
+    rarity: data.rarity,
+    condition_guess: data.condition_guess,
+    suggested_price: data.suggested_price,
+    ebay_title: data.ebay_title,
+    ebay_description: data.ebay_description,
+  },
+]);
     } catch (error) {
       alert("Error analyzing card. Make sure backend is running.");
     } finally {
@@ -108,7 +121,6 @@ export default function Home() {
             <p><span className="text-zinc-400">Set:</span> {result.set}</p>
             <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
             <p><span className="text-zinc-400">Suggested Price:</span> {result.suggested_price}</p>
-            <p className="text-sm text-zinc-500 mt-3">{result.status}</p>
             <p><span className="text-zinc-400">Card Number:</span> {result.card_number}</p>
             <p><span className="text-zinc-400">Condition Guess:</span> {result.condition_guess}</p>
 
