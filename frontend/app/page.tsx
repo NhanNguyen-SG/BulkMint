@@ -5,9 +5,12 @@ import { useState } from "react";
 type AnalysisResult = {
   card_name: string;
   set: string;
+  card_number: string;
   rarity: string;
+  condition_guess: string;
   suggested_price: string;
-  status: string;
+  ebay_title: string;
+  ebay_description: string;
 };
 
 export default function Home() {
@@ -104,6 +107,14 @@ export default function Home() {
             <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
             <p><span className="text-zinc-400">Suggested Price:</span> {result.suggested_price}</p>
             <p className="text-sm text-zinc-500 mt-3">{result.status}</p>
+            <p><span className="text-zinc-400">Card Number:</span> {result.card_number}</p>
+            <p><span className="text-zinc-400">Condition Guess:</span> {result.condition_guess}</p>
+
+          <div className="mt-5 border-t border-zinc-800 pt-4">
+            <h3 className="font-semibold mb-2">eBay Draft</h3>
+            <p><span className="text-zinc-400">Title:</span> {result.ebay_title}</p>
+            <p className="mt-2"><span className="text-zinc-400">Description:</span> {result.ebay_description}</p>
+</div>
           </div>
         )}
       </div>

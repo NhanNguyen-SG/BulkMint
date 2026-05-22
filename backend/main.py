@@ -39,19 +39,44 @@ async def analyze_card(file: UploadFile = File(...)):
                     {
                         "type": "text",
                         "text": """
-Identify this trading card.
+Analyze this One Piece trading card for a seller.
 
 Return ONLY valid JSON in this exact format:
 
 {
+
   "card_name": "",
+
   "set": "",
+
+  "card_number": "",
+
   "rarity": "",
-  "suggested_price": ""
+
+  "condition_guess": "",
+
+  "suggested_price": "",
+
+  "ebay_title": "",
+
+  "ebay_description": ""
+
 }
 
-Do not include markdown.
-Do not include explanations.
+Rules:
+
+- Use the visible card text and card number if possible.
+
+- If unsure, use "Unknown".
+
+- Keep ebay_title under 80 characters.
+
+- Make ebay_description clean and seller-friendly.
+
+- Do not include markdown.
+
+- Do not include explanations.
+
 Only return JSON.
 """
                     },
