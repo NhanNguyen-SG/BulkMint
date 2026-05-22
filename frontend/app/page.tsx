@@ -17,6 +17,7 @@ export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [inventory, setInventory] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
 
   function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -47,6 +48,7 @@ export default function Home() {
 
       const data = await response.json();
       setResult(data);
+      setInventory((prev) => [data, ...prev]);
     } catch (error) {
       alert("Error analyzing card. Make sure backend is running.");
     } finally {
@@ -117,6 +119,40 @@ export default function Home() {
 </div>
           </div>
         )}
+        {inventory.length > 0 && (
+  <div className="mt-8">
+    <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
+
+    <div className="space-y-4">
+      {inventory.map((card, index) => (
+        <div
+          key={index}
+          className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
+        >
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="font-semibold text-lg">
+                {card.card_name}
+              </p>
+
+              <p className="text-zinc-400">
+                {card.set} • {card.rarity}
+              </p>
+
+              <p className="text-green-400 mt-2">
+                {card.suggested_price}
+              </p>
+            </div>
+
+            <div className="text-right text-sm text-zinc-500">
+              #{card.card_number}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
       </div>
     </main>
   );
