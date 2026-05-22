@@ -2,16 +2,53 @@
 
 import { useState } from "react";
 
+type AnalysisResult = {
+  card_name: string;
+  set: string;
+  rarity: string;
+  suggested_price: string;
+  status: string;
+};
+
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [loading, setLoading] = useState(false);
 
   function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-
     if (!file) return;
 
-    const imageUrl = URL.createObjectURL(file);
-    setSelectedImage(imageUrl);
+    setSelectedFile(file);
+    setSelectedImage(URL.createObjectURL(file));
+    setResult(null);
+  }
+
+  async function analyzeCard() {
+    if (!selectedFile) {
+      alert("Please upload a card image first.");
+      return;
+    }
+
+    setLoading(true);
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch("http://localhost:8000/analyze-card", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      setResult(data);
+    } catch (error) {
+      alert("Error analyzing card. Make sure backend is running.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -24,9 +61,9 @@ export default function Home() {
         </p>
 
         <label
-        htmlFor="card-upload"
+          htmlFor="card-upload"
           className="block border-2 border-dashed border-zinc-700 rounded-xl p-8 text-center hover:border-green-500 transition cursor-pointer"
->
+        >
           <input
             id="card-upload"
             type="file"
@@ -51,9 +88,24 @@ export default function Home() {
           )}
         </label>
 
-        <button className="w-full mt-6 bg-green-500 hover:bg-green-400 text-black font-semibold py-3 rounded-xl transition">
-          Analyze Card
+        <button
+          onClick={analyzeCard}
+          disabled={loading}
+          className="w-full mt-6 bg-green-500 hover:bg-green-400 disabled:bg-zinc-600 disabled:text-zinc-300 text-black font-semibold py-3 rounded-xl transition"
+        >
+          {loading ? "Analyzing..." : "Analyze Card"}
         </button>
+
+        {result && (
+          <div className="mt-6 bg-zinc-950 border border-zinc-800 rounded-xl p-5">
+            <h2 className="text-xl font-semibold mb-3">Analysis Result</h2>
+            <p><span className="text-zinc-400">Card:</span> {result.card_name}</p>
+            <p><span className="text-zinc-400">Set:</span> {result.set}</p>
+            <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
+            <p><span className="text-zinc-400">Suggested Price:</span> {result.suggested_price}</p>
+            <p className="text-sm text-zinc-500 mt-3">{result.status}</p>
+          </div>
+        )}
       </div>
     </main>
   );

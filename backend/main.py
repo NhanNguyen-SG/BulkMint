@@ -1,0 +1,73 @@
+import base64
+import json
+import os
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI
+
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def home():
+    return {"message": "BulkMint backend is running"}
+
+@app.post("/analyze-card")
+async def analyze_card(file: UploadFile = File(...)):
+    image_bytes = await file.read()
+    base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": """
+Identify this trading card.
+
+Return ONLY valid JSON in this exact format:
+
+{
+  "card_name": "",
+  "set": "",
+  "rarity": "",
+  "suggested_price": ""
+}
+
+Do not include markdown.
+Do not include explanations.
+Only return JSON.
+"""
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=300
+    )
+
+    content = response.choices[0].message.content
+    parsed = json.loads(content)
+
+    return parsed
