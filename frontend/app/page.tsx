@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { authenticatedApiFetch } from "@/lib/api/authenticated-fetch";
+import { useEffect, useRef, useState } from "react";
+import {
+  authenticatedApiFetch,
+  AuthenticationRequiredError,
+} from "@/lib/api/authenticated-fetch";
 import { AuthStatus } from "./components/auth-status";
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 type AnalysisResult = {
   card_name: string;
@@ -20,24 +26,63 @@ type InventoryCard = AnalysisResult & {
   created_at: string;
 };
 
+async function apiError(response: Response, fallback: string): Promise<Error> {
+  try {
+    const body: unknown = await response.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "detail" in body &&
+      typeof body.detail === "string"
+    ) {
+      return new Error(body.detail);
+    }
+  } catch {
+    // Use the status-based fallback when the response is not JSON.
+  }
+
+  return new Error(`${fallback} (HTTP ${response.status})`);
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof AuthenticationRequiredError) {
+    return "Log in before continuing.";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [inventory, setInventory] = useState<InventoryCard[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const savingRef = useRef(false);
 
   async function fetchInventory() {
+    setInventoryLoading(true);
+    setInventoryError(null);
+
     try {
       const response = await authenticatedApiFetch("/cards");
       if (!response.ok) {
-        throw new Error(`Inventory API returned HTTP ${response.status}`);
+        throw await apiError(response, "Unable to load inventory");
       }
 
       const cards: InventoryCard[] = await response.json();
       setInventory(cards);
     } catch (error) {
       console.error("Fetch inventory error:", error);
+      setInventoryError(errorMessage(error, "Unable to load inventory."));
+    } finally {
+      setInventoryLoading(false);
     }
   }
 
@@ -47,58 +92,113 @@ export default function Home() {
     fetchInventory();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (selectedImage) {
+        URL.revokeObjectURL(selectedImage);
+      }
+    };
+  }, [selectedImage]);
+
   function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setUploadError(null);
+    setAnalysisError(null);
+    setSaveError(null);
+    setResult(null);
+    setSaved(false);
+
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      setSelectedFile(null);
+      setSelectedImage(null);
+      setUploadError("Choose a JPEG, PNG, or WebP image.");
+      event.currentTarget.value = "";
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_BYTES) {
+      setSelectedFile(null);
+      setSelectedImage(null);
+      setUploadError("Image must be 10 MB or smaller.");
+      event.currentTarget.value = "";
+      return;
+    }
+
     setSelectedFile(file);
     setSelectedImage(URL.createObjectURL(file));
-    setResult(null);
   }
 
   async function analyzeCard() {
     if (!selectedFile) {
-      alert("Please upload a card image first.");
+      setAnalysisError("Choose a card image before analyzing.");
       return;
     }
 
-    setLoading(true);
+    setAnalyzing(true);
+    setAnalysisError(null);
+    setSaveError(null);
+    setResult(null);
+    setSaved(false);
 
     const formData = new FormData();
     formData.append("file", selectedFile);
 
     try {
-      const response = await fetch("http://localhost:8000/analyze-card", {
+      const response = await authenticatedApiFetch("/analyze-card", {
         method: "POST",
         body: formData,
       });
 
-      const data = await response.json();
-
-      setResult(data);
-
-      try {
-        const saveResponse = await authenticatedApiFetch("/cards", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-
-        if (!saveResponse.ok) {
-          throw new Error(`Inventory API returned HTTP ${saveResponse.status}`);
-        }
-
-        const savedCard: InventoryCard = await saveResponse.json();
-        setInventory((prev) => [savedCard, ...prev]);
-      } catch (saveError) {
-        console.error("Inventory save error:", saveError);
-        alert("Inventory save failed. Check console.");
+      if (!response.ok) {
+        throw await apiError(response, "Unable to analyze card");
       }
+
+      const data: AnalysisResult = await response.json();
+      setResult(data);
     } catch (error) {
       console.error("Card analysis error:", error);
-      alert("Error analyzing card. Make sure backend is running.");
+      setAnalysisError(errorMessage(error, "Unable to analyze card."));
     } finally {
-      setLoading(false);
+      setAnalyzing(false);
+    }
+  }
+
+  async function saveCard() {
+    if (!result || saved || savingRef.current) {
+      return;
+    }
+
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const response = await authenticatedApiFetch("/cards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result),
+      });
+
+      if (!response.ok) {
+        throw await apiError(response, "Unable to save card");
+      }
+
+      const savedCard: InventoryCard = await response.json();
+      setInventory((previous) => {
+        if (previous.some((card) => card.id === savedCard.id)) {
+          return previous;
+        }
+        return [savedCard, ...previous];
+      });
+      setSaved(true);
+    } catch (error) {
+      console.error("Inventory save error:", error);
+      setSaveError(errorMessage(error, "Unable to save card."));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -122,7 +222,7 @@ export default function Home() {
           <input
             id="card-upload"
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             onChange={handleImageUpload}
             className="hidden"
           />
@@ -137,23 +237,38 @@ export default function Home() {
             <>
               <p className="text-lg font-medium">Upload Card Image</p>
               <p className="text-sm text-zinc-500 mt-2">
-                Drag & drop or click to upload
+                JPEG, PNG, or WebP · 10 MB maximum
               </p>
             </>
           )}
         </label>
 
+        {uploadError && (
+          <p role="alert" className="mt-3 text-sm text-red-400">
+            {uploadError}
+          </p>
+        )}
+
         <button
           onClick={analyzeCard}
-          disabled={loading}
+          disabled={!selectedFile || analyzing || saving}
           className="w-full mt-6 bg-green-500 hover:bg-green-400 disabled:bg-zinc-600 disabled:text-zinc-300 text-black font-semibold py-3 rounded-xl transition"
         >
-          {loading ? "Analyzing..." : "Analyze Card"}
+          {analyzing ? "Analyzing…" : "Analyze Card"}
         </button>
+
+        {analysisError && (
+          <p role="alert" className="mt-3 text-sm text-red-400">
+            {analysisError}
+          </p>
+        )}
 
         {result && (
           <div className="mt-6 bg-zinc-950 border border-zinc-800 rounded-xl p-5">
-            <h2 className="text-xl font-semibold mb-3">Analysis Result</h2>
+            <h2 className="text-xl font-semibold mb-1">Review Analysis</h2>
+            <p className="mb-3 text-sm text-zinc-500">
+              Confirm these details before saving.
+            </p>
             <p><span className="text-zinc-400">Card:</span> {result.card_name}</p>
             <p><span className="text-zinc-400">Set:</span> {result.set}</p>
             <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
@@ -166,17 +281,49 @@ export default function Home() {
               <p><span className="text-zinc-400">Title:</span> {result.ebay_title}</p>
               <p className="mt-2"><span className="text-zinc-400">Description:</span> {result.ebay_description}</p>
             </div>
+
+            <button
+              type="button"
+              onClick={saveCard}
+              disabled={saving || saved}
+              className="mt-5 w-full rounded-lg bg-green-500 py-2.5 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
+            >
+              {saving ? "Saving…" : saved ? "Saved" : "Save to Inventory"}
+            </button>
+
+            {saveError && (
+              <p role="alert" className="mt-3 text-sm text-red-400">
+                {saveError}
+              </p>
+            )}
+            {saved && (
+              <p className="mt-3 text-sm text-green-400">
+                Card saved to inventory.
+              </p>
+            )}
           </div>
         )}
 
-        {inventory.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
+        <div className="mt-8">
+          <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
 
+          {inventoryLoading && (
+            <p className="text-sm text-zinc-500">Loading inventory…</p>
+          )}
+          {inventoryError && (
+            <p role="alert" className="text-sm text-red-400">
+              {inventoryError}
+            </p>
+          )}
+          {!inventoryLoading && !inventoryError && inventory.length === 0 && (
+            <p className="text-sm text-zinc-500">No saved cards yet.</p>
+          )}
+
+          {inventory.length > 0 && (
             <div className="space-y-4">
-              {inventory.map((card, index) => (
+              {inventory.map((card) => (
                 <div
-                  key={index}
+                  key={card.id}
                   className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
                 >
                   <div className="flex justify-between items-start">
@@ -193,8 +340,8 @@ export default function Home() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </main>
   );
