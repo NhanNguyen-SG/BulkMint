@@ -21,10 +21,6 @@ export default function Home() {
   const [inventory, setInventory] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    fetchInventory();
-  }, []);
-
   async function fetchInventory() {
     const { data, error } = await supabase
       .from("cards")
@@ -49,6 +45,12 @@ export default function Home() {
 
     setInventory(formatted);
   }
+
+  useEffect(() => {
+    // Inventory is loaded asynchronously; state updates occur after the Supabase request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchInventory();
+  }, []);
 
   function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
