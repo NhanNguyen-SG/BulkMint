@@ -96,6 +96,32 @@ class SupabaseCardsRepository:
 
         return rows[0]
 
+    def delete_card(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+    ) -> None:
+        response = self._request(
+            "DELETE",
+            "/rest/v1/cards",
+            access_token=access_token,
+            headers={"Prefer": "return=representation"},
+            params={
+                "id": f"eq.{card_id}",
+                "owner_id": f"eq.{owner_id}",
+                "select": "id",
+            },
+        )
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise CardsRepositoryError("Supabase returned an invalid delete response") from error
+
+        if not isinstance(body, list) or len(body) != 1:
+            raise CardsRepositoryError("Supabase did not delete exactly one card")
+
     def _request(
         self,
         method: str,

@@ -11,7 +11,8 @@ from PIL import Image
 
 import main
 from auth import AuthenticatedUser, get_current_user
-from main import MAX_IMAGE_BYTES, app
+from image_validation import MAX_IMAGE_BYTES
+from main import app
 
 USER_ID = UUID("9fe0413d-9038-4da6-8f5f-dccaa95b7922")
 ANALYSIS_RESULT = {

@@ -1,10 +1,10 @@
 # Card Image Storage Contract
 
-Status: **design and migration proposal only — uploads are not implemented**
+Status: **implemented and validated locally — not applied remotely**
 
 The proposed SQL is in
 `supabase/migrations/20260701000200_card_image_storage_contract.sql`. It has
-not been applied locally or remotely.
+been applied and validated against local Supabase only.
 
 ## Design goals
 
@@ -185,7 +185,7 @@ on `storage.objects` for this access model:
 
 ## Upload sequence
 
-Future implementation should use this order:
+The FastAPI implementation uses this order:
 
 1. FastAPI verifies the user JWT.
 2. FastAPI revalidates MIME type, decoded image, size, and hash.
@@ -197,6 +197,25 @@ Future implementation should use this order:
 8. FastAPI returns image metadata and, when needed, a short-lived signed URL.
 
 The browser never writes Storage or `card_images` directly.
+
+## API behavior
+
+`POST /cards` accepts multipart form data:
+
+- `card`: required JSON matching the card creation contract;
+- `image`: optional original JPEG, PNG, or WebP file.
+
+FastAPI validates the image again, generates the card and image IDs, creates
+the canonical path, and runs the lifecycle above. No storage path, owner ID,
+card ID, or image ID is accepted from browser input.
+
+`GET /cards` returns these additional fields:
+
+- `image_id`: active front-image UUID, or null;
+- `image_url`: private signed URL valid for five minutes, or null.
+
+The frontend submits the original selected file only after review/save and
+renders the returned signed URL in inventory.
 
 ## Cleanup and compensation
 
@@ -275,9 +294,8 @@ Supabase project.
 
 ## Deliberate exclusions
 
-- No upload or download endpoint is implemented.
-- No frontend behavior changes.
-- No local or remote migration is applied.
+- No direct browser Storage access is implemented.
+- No remote migration is applied.
 - No service-role client is introduced.
 - No public bucket or permanent URL is introduced.
 - No image transformation, thumbnail, or CDN policy is introduced.

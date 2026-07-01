@@ -66,6 +66,8 @@ class CardCreate(BaseModel):
 class CardResponse(CardCreate):
     id: UUID
     created_at: datetime
+    image_id: UUID | None = None
+    image_url: str | None = None
 
     @classmethod
     def from_database_row(cls, row: object) -> "CardResponse":

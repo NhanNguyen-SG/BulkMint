@@ -24,6 +24,8 @@ type AnalysisResult = {
 type InventoryCard = AnalysisResult & {
   id: string;
   created_at: string;
+  image_id: string | null;
+  image_url: string | null;
 };
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
@@ -175,10 +177,15 @@ export default function Home() {
     setSaveError(null);
 
     try {
+      const formData = new FormData();
+      formData.append("card", JSON.stringify(result));
+      if (selectedFile) {
+        formData.append("image", selectedFile);
+      }
+
       const response = await authenticatedApiFetch("/cards", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -327,10 +334,23 @@ export default function Home() {
                   className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
                 >
                   <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold text-lg">{card.card_name}</p>
-                      <p className="text-zinc-400">{card.set} • {card.rarity}</p>
-                      <p className="text-green-400 mt-2">{card.suggested_price}</p>
+                    <div className="flex items-start gap-3">
+                      {card.image_url && (
+                        // Signed URLs are short-lived and generated at runtime.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={card.image_url}
+                          alt={`${card.card_name} card`}
+                          className="h-20 w-16 rounded-md border border-zinc-700 object-cover"
+                        />
+                      )}
+                      <div>
+                        <p className="font-semibold text-lg">{card.card_name}</p>
+                        <p className="text-zinc-400">{card.set} • {card.rarity}</p>
+                        <p className="text-green-400 mt-2">
+                          {card.suggested_price}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="text-right text-sm text-zinc-500">
