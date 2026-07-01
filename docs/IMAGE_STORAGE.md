@@ -246,6 +246,33 @@ After implementation is approved:
 Do not link to or push this migration to the remote Supabase project without a
 separate approval and rollout review.
 
+## Local validation result
+
+Validated locally on 2026-07-01 with Supabase CLI 2.109.0:
+
+```bash
+supabase db reset
+./supabase/tests/card_image_storage_local.sh
+```
+
+Results:
+
+- Both migrations applied successfully from a clean local reset.
+- The bucket is private with a 10 MiB limit and the three expected MIME types.
+- Anonymous upload and read were denied.
+- Owner upload, active-object read, and delete succeeded.
+- Cross-user read and delete were denied.
+- Metadata create/read remained owner-scoped.
+- Owner, card, and image ID path mismatches were denied.
+- An owner upload without existing `pending` metadata was denied.
+- The successful lifecycle used metadata-first ordering:
+  `pending metadata → object upload → active metadata`.
+- Cleanup deleted the object through the Storage API, then deleted metadata;
+  direct database verification found no remaining object.
+
+No migration change was required. The migration was not applied to any remote
+Supabase project.
+
 ## Deliberate exclusions
 
 - No upload or download endpoint is implemented.
