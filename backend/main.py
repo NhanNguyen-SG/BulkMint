@@ -21,9 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def home():
     return {"message": "BulkMint backend is running"}
+
 
 @app.post("/analyze-card")
 async def analyze_card(file: UploadFile = File(...)):
@@ -78,21 +80,22 @@ Rules:
 - Do not include explanations.
 
 Only return JSON.
-"""
+""",
                     },
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    }
-                ]
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                    },
+                ],
             }
         ],
-        max_tokens=300
+        max_tokens=300,
     )
 
     content = response.choices[0].message.content
+    if content is None:
+        raise ValueError("OpenAI returned no response content")
+
     parsed = json.loads(content)
 
     return parsed
