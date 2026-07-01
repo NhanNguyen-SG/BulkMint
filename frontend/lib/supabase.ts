@@ -1,9 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "./supabase/client";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabase = createClient(
-  supabaseUrl,
-  supabaseAnonKey
-);
+// Compatibility export for the existing client-only inventory page.
+// New code should create the appropriate browser or server client explicitly.
+export const supabase = createClient();
