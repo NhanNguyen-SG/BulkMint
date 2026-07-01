@@ -1,6 +1,6 @@
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Protocol
 from uuid import UUID
@@ -34,6 +34,7 @@ class JWKSClient(Protocol):
 class AuthenticatedUser:
     user_id: UUID
     claims: Mapping[str, Any]
+    access_token: str = field(repr=False)
 
 
 class SupabaseJWTVerifier:
@@ -93,7 +94,11 @@ class SupabaseJWTVerifier:
         except (KeyError, TypeError, ValueError) as error:
             raise JWTVerificationError("Invalid access token subject") from error
 
-        return AuthenticatedUser(user_id=user_id, claims=claims)
+        return AuthenticatedUser(
+            user_id=user_id,
+            claims=claims,
+            access_token=token,
+        )
 
 
 @lru_cache

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { authenticatedApiFetch } from "@/lib/api/authenticated-fetch";
 import { AuthStatus } from "./components/auth-status";
-import { supabase } from "../lib/supabase";
 
 type AnalysisResult = {
   card_name: string;
@@ -15,36 +15,30 @@ type AnalysisResult = {
   ebay_description: string;
 };
 
+type InventoryCard = AnalysisResult & {
+  id: string;
+  created_at: string;
+};
+
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [inventory, setInventory] = useState<AnalysisResult[]>([]);
+  const [inventory, setInventory] = useState<InventoryCard[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function fetchInventory() {
-    const { data, error } = await supabase
-      .from("cards")
-      .select("*")
-      .order("created_at", { ascending: false });
+    try {
+      const response = await authenticatedApiFetch("/cards");
+      if (!response.ok) {
+        throw new Error(`Inventory API returned HTTP ${response.status}`);
+      }
 
-    if (error) {
+      const cards: InventoryCard[] = await response.json();
+      setInventory(cards);
+    } catch (error) {
       console.error("Fetch inventory error:", error);
-      return;
     }
-
-    const formatted = data.map((card) => ({
-      card_name: card.card_name,
-      set: card.set_name,
-      card_number: card.card_number,
-      rarity: card.rarity,
-      condition_guess: card.condition_guess,
-      suggested_price: card.suggested_price,
-      ebay_title: card.ebay_title,
-      ebay_description: card.ebay_description,
-    }));
-
-    setInventory(formatted);
   }
 
   useEffect(() => {
@@ -82,26 +76,26 @@ export default function Home() {
       const data = await response.json();
 
       setResult(data);
-      setInventory((prev) => [data, ...prev]);
 
-      const { error } = await supabase.from("cards").insert([
-        {
-          card_name: data.card_name,
-          set_name: data.set,
-          card_number: data.card_number,
-          rarity: data.rarity,
-          condition_guess: data.condition_guess,
-          suggested_price: data.suggested_price,
-          ebay_title: data.ebay_title,
-          ebay_description: data.ebay_description,
-        },
-      ]);
+      try {
+        const saveResponse = await authenticatedApiFetch("/cards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
 
-      if (error) {
-        console.error("Supabase insert error:", error);
-        alert("Supabase save failed. Check console.");
+        if (!saveResponse.ok) {
+          throw new Error(`Inventory API returned HTTP ${saveResponse.status}`);
+        }
+
+        const savedCard: InventoryCard = await saveResponse.json();
+        setInventory((prev) => [savedCard, ...prev]);
+      } catch (saveError) {
+        console.error("Inventory save error:", saveError);
+        alert("Inventory save failed. Check console.");
       }
     } catch (error) {
+      console.error("Card analysis error:", error);
       alert("Error analyzing card. Make sure backend is running.");
     } finally {
       setLoading(false);

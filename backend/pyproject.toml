@@ -5,6 +5,7 @@ description = "FastAPI backend for BulkMint"
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "fastapi>=0.128.8,<1.0",
+    "httpx>=0.28,<1",
     "openai>=2.38.0,<3.0",
     "pydantic>=2.13.4,<3.0",
     "pyjwt[crypto]>=2.10,<3",
@@ -15,7 +16,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28,<1",
     "mypy>=1.19.1,<2.0",
     "pytest>=9.0.2,<10.0",
     "ruff>=0.15.5,<1.0",

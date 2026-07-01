@@ -9,10 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
 from auth import AuthenticatedUser, get_current_user
+from cards_api import router as cards_router
 
 load_dotenv()
 
 app = FastAPI()
+app.include_router(cards_router)
 
 app.add_middleware(
     CORSMiddleware,
