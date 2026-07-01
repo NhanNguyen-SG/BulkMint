@@ -1,15 +1,16 @@
 import base64
 import json
-import os
+from functools import lru_cache
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
-load_dotenv()
+from auth import AuthenticatedUser, get_current_user
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+load_dotenv()
 
 app = FastAPI()
 
@@ -22,17 +23,29 @@ app.add_middleware(
 )
 
 
+@lru_cache
+def get_openai_client() -> OpenAI:
+    return OpenAI()
+
+
 @app.get("/")
-def home():
+def home() -> dict[str, str]:
     return {"message": "BulkMint backend is running"}
 
 
+@app.get("/me")
+def me(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> dict[str, str]:
+    return {"user_id": str(user.user_id)}
+
+
 @app.post("/analyze-card")
-async def analyze_card(file: UploadFile = File(...)):
+async def analyze_card(file: UploadFile = File(...)) -> dict[str, Any]:
     image_bytes = await file.read()
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-    response = client.chat.completions.create(
+    response = get_openai_client().chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {
