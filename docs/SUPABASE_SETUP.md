@@ -2,8 +2,8 @@
 
 Status: **manual plan only — do not apply without explicit approval**
 
-The proposed migration creates a fresh target schema. It has not been run
-locally against a Supabase stack and has not been applied to any remote project.
+The proposed migration creates a fresh target schema. It passed local Supabase
+validation on 2026-07-01 and has not been applied to any remote project.
 
 ## Why the current project needs a reconciliation migration
 
@@ -58,13 +58,13 @@ customer data into this repository.
 
 ## Local Supabase validation
 
-The Supabase CLI is not currently installed on this workstation. After
-separately approving its installation, initialize and start a local stack:
+Supabase CLI 2.109.0 is installed on this workstation. The local project is
+initialized and can be started with:
 
 ```sh
-supabase init
 supabase start
 supabase db reset
+./supabase/tests/rls_local.sh
 ```
 
 `supabase db reset` is destructive to the local Supabase database. It should

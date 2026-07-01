@@ -1,6 +1,6 @@
 # Supabase Local Testing
 
-Status: **plan only — not executed**
+Status: **validated locally on 2026-07-01**
 
 This plan validates the proposed database migration and RLS policies entirely
 on the Mac mini. It must not use `supabase login`, `supabase link`,
@@ -9,18 +9,18 @@ on the Mac mini. It must not use `supabase login`, `supabase link`,
 ## Current prerequisite status
 
 - Docker Desktop: installed
-- Supabase CLI: not installed
+- Supabase CLI: 2.109.0
 - Proposed migration:
   `supabase/migrations/20260701000100_initial_database_contract.sql`
 
-The recommended macOS installation method is Homebrew:
+The CLI was installed with the recommended macOS Homebrew command:
 
 ```sh
 brew install supabase/tap/supabase
 ```
 
-Do not run this command until installation is explicitly approved. Installing
-the CLI globally with `npm install -g supabase` is not supported by Supabase.
+Installing the CLI globally with `npm install -g supabase` is not supported by
+Supabase.
 
 ## Initialize the local project
 
@@ -54,6 +54,32 @@ Expected local endpoints include:
 - Mailpit: `http://127.0.0.1:54324`
 
 Use the actual endpoints printed by `supabase status` if they differ.
+
+The CLI currently warns that local development services bind to all host
+interfaces. Keep the stack running only while testing, retain the macOS
+firewall, and stop it immediately afterward.
+
+## Recorded validation
+
+The following checks passed locally with no remote project link:
+
+- The migration applied successfully during initial startup.
+- A second `supabase db reset` applied the migration successfully.
+- All five domain tables exist and have RLS enabled.
+- All 17 expected policies exist.
+- The `anon` role has no grants on domain tables.
+- Authenticated users have no audit-event write grants.
+- `supabase db lint --local --schema public` found no schema errors.
+- Anonymous, owner, cross-user, service-role, and audit-event RLS tests passed.
+
+Run the committed end-to-end test with:
+
+```sh
+./supabase/tests/rls_local.sh
+```
+
+The script refuses non-local API URLs, obtains local keys at runtime, creates
+temporary local users, and does not print or persist credentials.
 
 ## Schema validation
 
