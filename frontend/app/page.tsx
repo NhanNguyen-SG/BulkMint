@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticatedApiFetch,
   AuthenticationRequiredError,
@@ -42,6 +42,13 @@ type EditCardForm = {
   status: InventoryCard["status"];
 };
 
+type InventoryFilters = {
+  q: string;
+  status: "" | InventoryCard["status"];
+  set_name: string;
+  rarity: string;
+};
+
 const CARD_STATUSES: InventoryCard["status"][] = [
   "draft",
   "active",
@@ -49,6 +56,13 @@ const CARD_STATUSES: InventoryCard["status"][] = [
   "sold",
   "archived",
 ];
+
+const EMPTY_INVENTORY_FILTERS: InventoryFilters = {
+  q: "",
+  status: "",
+  set_name: "",
+  rarity: "",
+};
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
   try {
@@ -99,15 +113,26 @@ export default function Home() {
   );
   const [removalError, setRemovalError] = useState<string | null>(null);
   const [removalErrorCardId, setRemovalErrorCardId] = useState<string | null>(null);
+  const [filterForm, setFilterForm] = useState<InventoryFilters>(
+    EMPTY_INVENTORY_FILTERS,
+  );
+  const [appliedFilters, setAppliedFilters] = useState<InventoryFilters>(
+    EMPTY_INVENTORY_FILTERS,
+  );
   const savingRef = useRef(false);
-  const visibleInventory = inventory.filter((card) => card.status !== "archived");
 
-  async function fetchInventory() {
+  const fetchInventory = useCallback(async (filters: InventoryFilters) => {
     setInventoryLoading(true);
     setInventoryError(null);
 
     try {
-      const response = await authenticatedApiFetch("/cards");
+      const query = new URLSearchParams({ limit: "50" });
+      if (filters.q.trim()) query.set("q", filters.q.trim());
+      if (filters.status) query.set("status", filters.status);
+      if (filters.set_name.trim()) query.set("set_name", filters.set_name.trim());
+      if (filters.rarity.trim()) query.set("rarity", filters.rarity.trim());
+
+      const response = await authenticatedApiFetch(`/cards?${query.toString()}`);
       if (!response.ok) {
         throw await apiError(response, "Unable to load inventory");
       }
@@ -120,13 +145,32 @@ export default function Home() {
     } finally {
       setInventoryLoading(false);
     }
+  }, []);
+
+  function updateFilter<FieldName extends keyof InventoryFilters>(
+    field: FieldName,
+    value: InventoryFilters[FieldName],
+  ) {
+    setFilterForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function applyInventoryFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAppliedFilters(filterForm);
+    void fetchInventory(filterForm);
+  }
+
+  function clearInventoryFilters() {
+    setFilterForm(EMPTY_INVENTORY_FILTERS);
+    setAppliedFilters(EMPTY_INVENTORY_FILTERS);
+    void fetchInventory(EMPTY_INVENTORY_FILTERS);
   }
 
   useEffect(() => {
     // Inventory is loaded asynchronously; state updates occur after the Supabase request.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchInventory();
-  }, []);
+    void fetchInventory(EMPTY_INVENTORY_FILTERS);
+  }, [fetchInventory]);
 
   useEffect(() => {
     return () => {
@@ -367,9 +411,14 @@ export default function Home() {
       }
 
       const archivedCard: InventoryCard = await response.json();
-      setInventory((current) =>
-        current.map((card) => (card.id === archivedCard.id ? archivedCard : card)),
-      );
+      setInventory((current) => {
+        if (appliedFilters.status === "archived") {
+          return current.map((card) =>
+            card.id === archivedCard.id ? archivedCard : card,
+          );
+        }
+        return current.filter((card) => card.id !== archivedCard.id);
+      });
     } catch (error) {
       console.error("Inventory archive error:", error);
       setRemovalError(errorMessage(error, "Unable to archive card."));
@@ -524,6 +573,77 @@ export default function Home() {
         <div className="mt-8">
           <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
 
+          <form
+            onSubmit={applyInventoryFilters}
+            className="mb-4 grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 md:grid-cols-2"
+          >
+            <label className="text-sm md:col-span-2">
+              <span className="mb-1 block text-zinc-400">Search card name</span>
+              <input
+                type="search"
+                value={filterForm.q}
+                onChange={(event) => updateFilter("q", event.target.value)}
+                placeholder="e.g. Monkey D. Luffy"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-zinc-400">Set</span>
+              <input
+                value={filterForm.set_name}
+                onChange={(event) => updateFilter("set_name", event.target.value)}
+                placeholder="All sets"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-zinc-400">Rarity</span>
+              <input
+                value={filterForm.rarity}
+                onChange={(event) => updateFilter("rarity", event.target.value)}
+                placeholder="All rarities"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+              />
+            </label>
+            <label className="text-sm md:col-span-2">
+              <span className="mb-1 block text-zinc-400">Status</span>
+              <select
+                value={filterForm.status}
+                onChange={(event) =>
+                  updateFilter(
+                    "status",
+                    event.target.value as InventoryFilters["status"],
+                  )
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+              >
+                <option value="">All active inventory</option>
+                {CARD_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex gap-3 md:col-span-2">
+              <button
+                type="submit"
+                disabled={inventoryLoading}
+                className="rounded-lg bg-green-500 px-4 py-2 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
+              >
+                {inventoryLoading ? "Searching…" : "Search"}
+              </button>
+              <button
+                type="button"
+                onClick={clearInventoryFilters}
+                disabled={inventoryLoading}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:opacity-60"
+              >
+                Clear Filters
+              </button>
+            </div>
+          </form>
+
           {inventoryLoading && (
             <p className="text-sm text-zinc-500">Loading inventory…</p>
           )}
@@ -532,13 +652,17 @@ export default function Home() {
               {inventoryError}
             </p>
           )}
-          {!inventoryLoading && !inventoryError && visibleInventory.length === 0 && (
-            <p className="text-sm text-zinc-500">No saved cards yet.</p>
+          {!inventoryLoading && !inventoryError && inventory.length === 0 && (
+            <p className="text-sm text-zinc-500">
+              {Object.values(appliedFilters).some(Boolean)
+                ? "No cards match these filters."
+                : "No saved cards yet."}
+            </p>
           )}
 
-          {visibleInventory.length > 0 && (
+          {inventory.length > 0 && (
             <div className="space-y-4">
-              {visibleInventory.map((card) => (
+              {inventory.map((card) => (
                 <div
                   key={card.id}
                   className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
@@ -576,16 +700,21 @@ export default function Home() {
                       >
                         Edit
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => archiveCard(card.id)}
-                        disabled={editSavingId === card.id || removingCardId === card.id}
-                        className="mt-2 block w-full rounded-md border border-amber-600/40 px-3 py-1.5 text-sm text-amber-300 transition hover:border-amber-400 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {removingCardId === card.id && removalAction === "archive"
-                          ? "Archiving…"
-                          : "Archive"}
-                      </button>
+                      {card.status !== "archived" && (
+                        <button
+                          type="button"
+                          onClick={() => archiveCard(card.id)}
+                          disabled={
+                            editSavingId === card.id || removingCardId === card.id
+                          }
+                          className="mt-2 block w-full rounded-md border border-amber-600/40 px-3 py-1.5 text-sm text-amber-300 transition hover:border-amber-400 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {removingCardId === card.id &&
+                          removalAction === "archive"
+                            ? "Archiving…"
+                            : "Archive"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => deleteCard(card.id)}

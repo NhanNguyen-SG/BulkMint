@@ -41,6 +41,11 @@ class FakeCardsRepository:
         self.cards = cards
         self.list_owner_id: UUID | None = None
         self.list_access_token: str | None = None
+        self.list_q: str | None = None
+        self.list_status: str | None = None
+        self.list_set_name: str | None = None
+        self.list_rarity: str | None = None
+        self.list_limit: int | None = None
         self.create_owner_id: UUID | None = None
         self.create_access_token: str | None = None
         self.created_card: CardCreate | None = None
@@ -52,9 +57,24 @@ class FakeCardsRepository:
         self.raise_on_update: Exception | None = None
         self.raise_on_delete: Exception | None = None
 
-    def list_cards(self, *, owner_id: UUID, access_token: str) -> list[CardResponse]:
+    def list_cards(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        q: str | None = None,
+        status: str | None = None,
+        set_name: str | None = None,
+        rarity: str | None = None,
+        limit: int = 50,
+    ) -> list[CardResponse]:
         self.list_owner_id = owner_id
         self.list_access_token = access_token
+        self.list_q = q
+        self.list_status = status
+        self.list_set_name = set_name
+        self.list_rarity = rarity
+        self.list_limit = limit
         return self.cards
 
     def create_card(
@@ -247,6 +267,56 @@ def test_list_cards_uses_authenticated_user(
     assert response.json()[0]["image_url"] == "http://example.test/signed-image"
     assert repository.list_owner_id == USER_ID
     assert repository.list_access_token == ACCESS_TOKEN
+    assert repository.list_status is None
+    assert repository.list_limit == 50
+
+
+def test_list_cards_forwards_search_and_filters(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.get(
+        "/cards",
+        params={
+            "q": "Luffy",
+            "status": "active",
+            "set_name": "Romance",
+            "rarity": "Rare",
+            "limit": 25,
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.list_owner_id == USER_ID
+    assert repository.list_q == "Luffy"
+    assert repository.list_status == "active"
+    assert repository.list_set_name == "Romance"
+    assert repository.list_rarity == "Rare"
+    assert repository.list_limit == 25
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_status"),
+    [
+        ({"limit": 0}, 422),
+        ({"limit": 101}, 422),
+        ({"status": "unknown"}, 422),
+    ],
+)
+def test_list_cards_rejects_invalid_filters(
+    authenticated_client: TestClient,
+    params: dict[str, object],
+    expected_status: int,
+) -> None:
+    response = authenticated_client.get("/cards", params=params)
+
+    assert response.status_code == expected_status
 
 
 def test_create_card_attaches_authenticated_owner(

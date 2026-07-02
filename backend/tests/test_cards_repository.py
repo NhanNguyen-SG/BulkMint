@@ -42,7 +42,9 @@ def test_repository_lists_only_authenticated_owner_cards() -> None:
         assert request.headers["apikey"] == "test-publishable-key"
         assert request.headers["authorization"] == f"Bearer {ACCESS_TOKEN}"
         assert request.url.params["owner_id"] == f"eq.{USER_ID}"
+        assert request.url.params["status"] == "neq.archived"
         assert request.url.params["order"] == "created_at.desc"
+        assert request.url.params["limit"] == "50"
         return httpx.Response(200, json=[DATABASE_ROW])
 
     repository = SupabaseCardsRepository(
@@ -56,6 +58,70 @@ def test_repository_lists_only_authenticated_owner_cards() -> None:
     assert len(cards) == 1
     assert cards[0].id == CARD_ID
     assert cards[0].set == CARD_PAYLOAD["set"]
+
+
+@pytest.mark.parametrize(
+    ("q", "set_name", "rarity", "expected_parameter", "expected_value"),
+    [
+        ("Zoro", None, None, "card_name", "ilike.*Zoro*"),
+        (None, "Romance", None, "set_name", "ilike.*Romance*"),
+        (None, None, "Rare", "rarity", "ilike.Rare"),
+    ],
+)
+def test_repository_applies_inventory_search_filters(
+    q: str | None,
+    set_name: str | None,
+    rarity: str | None,
+    expected_parameter: str,
+    expected_value: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["owner_id"] == f"eq.{USER_ID}"
+        assert request.url.params["status"] == "neq.archived"
+        assert request.url.params[expected_parameter] == expected_value
+        return httpx.Response(200, json=[DATABASE_ROW])
+
+    repository = SupabaseCardsRepository(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    cards = repository.list_cards(
+        owner_id=USER_ID,
+        access_token=ACCESS_TOKEN,
+        q=q,
+        set_name=set_name,
+        rarity=rarity,
+    )
+
+    assert len(cards) == 1
+
+
+def test_repository_includes_archived_only_when_requested() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["owner_id"] == f"eq.{USER_ID}"
+        assert request.url.params["status"] == "eq.archived"
+        assert request.url.params["limit"] == "10"
+        return httpx.Response(
+            200,
+            json=[{**DATABASE_ROW, "status": "archived"}],
+        )
+
+    repository = SupabaseCardsRepository(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    cards = repository.list_cards(
+        owner_id=USER_ID,
+        access_token=ACCESS_TOKEN,
+        status="archived",
+        limit=10,
+    )
+
+    assert cards[0].status == "archived"
 
 
 def test_repository_attaches_owner_to_created_card() -> None:

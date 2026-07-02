@@ -5,7 +5,7 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from card_models import CardCreate, CardResponse, CardUpdate
+from card_models import CardCreate, CardResponse, CardStatus, CardUpdate
 
 CARD_COLUMNS = ",".join(
     (
@@ -66,16 +66,36 @@ class SupabaseCardsRepository:
             publishable_key=publishable_key,
         )
 
-    def list_cards(self, *, owner_id: UUID, access_token: str) -> list[CardResponse]:
+    def list_cards(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        q: str | None = None,
+        status: CardStatus | None = None,
+        set_name: str | None = None,
+        rarity: str | None = None,
+        limit: int = 50,
+    ) -> list[CardResponse]:
+        params = {
+            "select": CARD_COLUMNS,
+            "owner_id": f"eq.{owner_id}",
+            "status": f"eq.{status}" if status is not None else "neq.archived",
+            "order": "created_at.desc",
+            "limit": str(limit),
+        }
+        if q is not None:
+            params["card_name"] = f"ilike.*{self._escape_like_pattern(q)}*"
+        if set_name is not None:
+            params["set_name"] = f"ilike.*{self._escape_like_pattern(set_name)}*"
+        if rarity is not None:
+            params["rarity"] = f"ilike.{self._escape_like_pattern(rarity)}"
+
         response = self._request(
             "GET",
             "/rest/v1/cards",
             access_token=access_token,
-            params={
-                "select": CARD_COLUMNS,
-                "owner_id": f"eq.{owner_id}",
-                "order": "created_at.desc",
-            },
+            params=params,
         )
         return self._parse_rows(response)
 
@@ -203,6 +223,15 @@ class SupabaseCardsRepository:
             return [CardResponse.from_database_row(row) for row in body]
         except (ValueError, ValidationError) as error:
             raise CardsRepositoryError("Supabase returned an invalid cards response") from error
+
+    @staticmethod
+    def _escape_like_pattern(value: str) -> str:
+        return (
+            value.replace("\\", "\\\\")
+            .replace("*", "\\*")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
 
 
 @lru_cache

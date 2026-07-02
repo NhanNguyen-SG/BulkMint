@@ -1,11 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
 
 from auth import AuthenticatedUser, get_current_user
-from card_models import CardCreate, CardResponse, CardUpdate
+from card_models import CardCreate, CardResponse, CardStatus, CardUpdate
 from cards_repository import (
     CardNotFoundError,
     CardsRepositoryConfigurationError,
@@ -73,11 +73,21 @@ def attach_card_images(
 @router.get("", response_model=list[CardResponse])
 def list_cards(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    q: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    card_status: Annotated[CardStatus | None, Query(alias="status")] = None,
+    set_name: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    rarity: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[CardResponse]:
     try:
         cards = get_cards_repository().list_cards(
             owner_id=user.user_id,
             access_token=user.access_token,
+            q=q,
+            status=card_status,
+            set_name=set_name,
+            rarity=rarity,
+            limit=limit,
         )
         cards = attach_card_images(cards=cards, user=user)
     except (
