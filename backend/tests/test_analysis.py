@@ -46,6 +46,14 @@ def png_image() -> bytes:
     return buffer.getvalue()
 
 
+def test_health_is_public_and_minimal() -> None:
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_analyze_card_rejects_missing_authentication() -> None:
     with TestClient(app) as client:
         response = client.post(

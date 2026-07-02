@@ -19,25 +19,37 @@ class SupabaseAuditRepository:
         *,
         supabase_url: str,
         secret_key: str,
+        authorization_token: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.supabase_url = supabase_url.rstrip("/")
         self.secret_key = secret_key
+        self.authorization_token = authorization_token
         self.transport = transport
 
     @classmethod
     def from_environment(cls) -> "SupabaseAuditRepository":
         supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-        secret_key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv(
-            "SUPABASE_SERVICE_ROLE_KEY", ""
-        )
+        secret_key = os.getenv("SUPABASE_SECRET_KEY", "")
+        service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        selected_key = secret_key or service_role_key
         if not supabase_url:
             raise AuditRepositoryConfigurationError("SUPABASE_URL is required")
-        if not secret_key:
+        if not selected_key:
             raise AuditRepositoryConfigurationError(
                 "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY is required"
             )
-        return cls(supabase_url=supabase_url, secret_key=secret_key)
+
+        # Hosted sb_secret keys are opaque API keys, not bearer JWTs. Legacy
+        # service-role keys remain JWTs and require the Authorization header.
+        authorization_token = (
+            None if selected_key.startswith("sb_secret_") else selected_key
+        )
+        return cls(
+            supabase_url=supabase_url,
+            secret_key=selected_key,
+            authorization_token=authorization_token,
+        )
 
     def create_listing_event(
         self,
@@ -51,9 +63,10 @@ class SupabaseAuditRepository:
     ) -> None:
         headers = {
             "apikey": self.secret_key,
-            "Authorization": f"Bearer {self.secret_key}",
             "Prefer": "return=minimal",
         }
+        if self.authorization_token is not None:
+            headers["Authorization"] = f"Bearer {self.authorization_token}"
         try:
             with httpx.Client(
                 base_url=self.supabase_url,

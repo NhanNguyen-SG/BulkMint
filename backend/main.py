@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
+from app_config import AppSettings
 from auth import AuthenticatedUser, get_current_user
 from cards_api import router as cards_router
 from image_validation import read_validated_image
@@ -15,13 +16,18 @@ from listing_api import router as listing_router
 
 load_dotenv()
 
-app = FastAPI()
+settings = AppSettings.from_environment()
+app = FastAPI(
+    docs_url="/docs" if settings.docs_enabled else None,
+    redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
+)
 app.include_router(cards_router)
 app.include_router(listing_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=list(settings.cors_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,6 +42,11 @@ def get_openai_client() -> OpenAI:
 @app.get("/")
 def home() -> dict[str, str]:
     return {"message": "BulkMint backend is running"}
+
+
+@app.get("/health", include_in_schema=False)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/me")
