@@ -1,7 +1,7 @@
 # BulkMint V0.4 Private Beta Deployment Plan
 
-Status: **Phase 2 deployment foundation prepared locally — no external
-resources changed**
+Status: **Phase 3 hosted migrations applied and verified — Railway and Vercel
+not deployed**
 
 Target release: `v0.3.1`
 
@@ -369,17 +369,120 @@ Local development must continue using `http://localhost:3000` and
 
 ## Phase 3: hosted Supabase setup and migration dry run
 
-Account steps, performed by the owner when requested:
+### Hosted project creation
 
-1. Open the [Supabase Dashboard](https://supabase.com/dashboard).
-2. Select the intended organization.
-3. Create project `bulkmint-beta`.
-4. Choose the approved region, plan, and database password.
-5. Wait for project provisioning.
-6. Record the Project URL, project reference, publishable key, secret key, and
-   database major version in the relevant provider secret stores.
-7. Enable or confirm asymmetric JWT signing and record only the issuer/JWKS
-   URLs, never a private signing key.
+Account steps, performed by the owner:
+
+1. Open the [Supabase Dashboard](https://supabase.com/dashboard) and sign in.
+2. Select the intended organization. Create one first if the account has no
+   organization.
+3. Select **New project**.
+4. Set the project name to `bulkmint-beta`.
+5. Generate a strong database password and save it in the owner's password
+   manager. Do not send it through chat or commit it.
+6. Choose the region nearest both the expected beta users and the future
+   Railway region. Region changes later require a project migration.
+7. Select the intended plan and review spending controls.
+8. Create the project and wait until its status is healthy.
+9. Do not run SQL, install integrations, create tables, or change Auth settings
+   yet.
+
+Official project overview:
+[Supabase hosted platform](https://supabase.com/docs/guides/platform).
+
+### Values to collect
+
+Collect the following after provisioning:
+
+| Name | Exact location or derivation | Handling |
+| --- | --- | --- |
+| Project URL | Project **Connect** dialog, or **Integrations → Data API** | May be shared for configuration |
+| Project reference | Hostname prefix in `https://<project-ref>.supabase.co` | May be shared for CLI linking |
+| Publishable key | **Project Settings → API Keys → Publishable key** | Public by design; may be shared |
+| Secret key | **Project Settings → API Keys → Secret keys** | Never paste into chat; Railway only |
+| Legacy service-role key | **Project Settings → API Keys → Legacy API Keys**, only if needed | Never paste into chat; fallback only |
+| JWT issuer | `<Project URL>/auth/v1` | Derived, non-secret |
+| JWKS URL | `<Project URL>/auth/v1/.well-known/jwks.json` | Derived, non-secret |
+| Database major version | Dashboard infrastructure/database settings, or `show server_version;` in SQL Editor | Share version number only |
+
+Use the new `sb_publishable_...` and `sb_secret_...` keys when available.
+Do not copy the secret key into a local shell history, source file, Vercel, or
+chat. The backend production template already contains the placeholder
+`SUPABASE_SECRET_KEY`; the real value will later be entered directly into
+Railway.
+
+In **Project Settings → JWT Keys**, confirm the active signing key is
+asymmetric and uses an algorithm accepted by the backend (`ES256` or `RS256`).
+Do not rotate, revoke, import, or generate a signing key without a separate
+approval. Record only the algorithm and public JWKS URL, never private key
+material.
+
+Official references:
+
+- [Supabase API key locations and handling](https://supabase.com/docs/guides/getting-started/api-keys)
+- [Supabase JWT signing keys](https://supabase.com/docs/guides/auth/signing-keys)
+
+### Safe handoff
+
+After creating the project, report only:
+
+- project status (`healthy` or the displayed status);
+- Project URL;
+- project reference;
+- publishable key, if desired (it is public);
+- database major version;
+- JWT signing algorithm;
+- confirmation that the secret key was collected and stored, by **name only**.
+
+Do not report the secret key, legacy service-role key, database password,
+access token, or private signing material.
+
+The existing files `backend/.env.production.example` and
+`frontend/.env.production.example` already contain all required names and
+placeholders. Real production `.env` files will not be created or committed.
+
+### Link and dry-run approval gate
+
+Creating the project does not authorize CLI linking. After the safe handoff,
+request explicit approval before running `supabase login` or
+`supabase link`.
+
+Phase 3 execution record:
+
+- Hosted project reported healthy.
+- Project reference was verified as `hzeppgctugtrzfftpswz`.
+- Database major version: PostgreSQL 17.
+- JWT signing algorithm: ES256 (ECC P-256).
+- Supabase CLI login completed through the browser flow.
+- Local project link completed and the linked reference was verified before
+  any database command.
+- Initial remote migration history was empty.
+- `supabase db push --dry-run --linked` completed successfully.
+- The dry-run listed exactly the four expected migrations, in order:
+  1. `20260701000100_initial_database_contract.sql`
+  2. `20260701000200_card_image_storage_contract.sql`
+  3. `20260701000300_listing_pricing_contract.sql`
+  4. `20260701000400_align_listing_draft_api_contract.sql`
+- A post-dry-run migration-list check still showed an empty remote column.
+- After a separate explicit approval, the dry-run was repeated and matched the
+  same four migrations in the same order.
+- `supabase db push --linked` then applied all four migrations successfully.
+- The CLI emitted a non-fatal post-apply pg-delta catalog-cache warning about a
+  missing temporary CA file. Migration history and independent schema dumps
+  confirmed that the database changes completed.
+- Post-apply migration history shows all four local and remote versions
+  synchronized.
+- Read-only schema verification confirmed:
+  - exactly eight expected `public` tables and no unexpected public tables;
+  - RLS enabled on all eight tables;
+  - exactly 23 expected public RLS policies;
+  - exactly five expected public functions, eight triggers, and 18 indexes;
+  - exactly three expected owner-scoped Storage object policies;
+  - one private `card-images` bucket with a 10 MiB limit and JPEG, PNG, and
+    WebP MIME allowlist.
+- No Auth setting was changed.
+- Security Advisor results are pending a manual Dashboard review because the
+  installed CLI does not expose the hosted Advisor report.
 
 Proposed CLI review sequence:
 
@@ -402,6 +505,10 @@ require explicit approval at execution time. The dry run must be reviewed in
 full. Do **not** run `supabase db push` without a second, explicit migration
 approval.
 
+The owner should enter the Supabase access token and database password only
+into the interactive CLI prompts. They must not be passed as command-line
+arguments, printed, logged, or saved in repository files.
+
 Before applying:
 
 - confirm the hosted Postgres major version;
@@ -411,6 +518,52 @@ Before applying:
 - verify the private bucket definition and storage policies;
 - confirm the migration list contains only the expected four migrations;
 - capture the empty-project rollback/recreate plan.
+
+### Migration application plan
+
+Executed after separate explicit approval:
+
+1. Confirm the linked project reference and Git commit.
+2. Confirm the project has no production users or application data.
+3. Re-run `supabase db push --dry-run --linked` and compare its output with the
+   reviewed dry run.
+4. Record the four expected migration filenames.
+5. Run exactly `supabase db push --linked` once.
+6. Confirm `supabase migration list --linked` shows all four migrations as
+   applied.
+7. Verify table grants, RLS enablement/policies, indexes, triggers, and
+   constraints.
+8. Verify the private `card-images` bucket, 10 MiB limit, and MIME allowlist.
+9. Run production-safe anonymous/owner/cross-user smoke tests with dedicated
+   beta test users; never use the secret key in browser tests.
+10. Review Supabase Security Advisor findings before backend deployment.
+
+Steps 1 through 8 are complete. Step 9 remains part of final beta validation
+after test-user creation is separately approved. Step 10 remains a manual
+account action: open the hosted project's **Advisors** page in the Supabase
+Dashboard, select the Security report, and record findings by title/severity
+only. Do not apply suggested changes without review.
+
+### Rollback plan
+
+The current migrations are forward-only; no down migrations exist. Do not edit
+an already-applied migration file.
+
+- If the dry run is wrong: stop. Unlink if necessary and change only local
+  migration/configuration files after review. No remote rollback is needed.
+- If a migration statement fails: each migration is transaction-wrapped, so
+  the failing migration should roll back its own transaction. Stop and inspect
+  migration history before any retry; earlier migrations may already be
+  committed.
+- If all migrations apply but validation fails while the project is still
+  empty: preferred recovery is either an explicit compensating migration or,
+  with separate destructive approval, delete and recreate the empty hosted
+  project. Recreate keys and provider variables afterward.
+- After any real user data exists: never delete/recreate as a routine rollback.
+  Use a reviewed forward corrective migration or the hosted backup/PITR
+  capability available on the selected plan.
+- Before inviting beta users, document and test the selected plan's backup and
+  restore procedure.
 
 ## Phase 4: Railway deployment gate
 
@@ -466,8 +619,8 @@ Delete or clearly label test data after validation.
 
 Critical before deployment:
 
-- Remote migrations have never been dry-run or applied.
 - Provider projects and production environment variables are not configured.
+- Supabase Security Advisor findings have not yet been manually reviewed.
 
 High priority before inviting users:
 
@@ -504,10 +657,11 @@ Required approvals, in order:
 
 1. **Completed:** Phase 2 repository deployment configuration, including the
    Supabase secret-key compatibility fix.
-2. Supabase account/project creation.
-3. Supabase CLI login/project linking.
-4. Hosted migration dry run.
-5. Hosted migration application.
+2. **Completed:** Supabase account/project creation.
+3. **Completed:** Supabase CLI login/project linking.
+4. **Completed:** Hosted migration dry run.
+5. **Completed:** Hosted migration application and read-only schema
+   verification.
 6. Railway account/project configuration.
 7. Railway deployment.
 8. Vercel account/project configuration.
