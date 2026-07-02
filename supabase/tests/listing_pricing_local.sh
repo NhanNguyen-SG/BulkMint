@@ -112,6 +112,32 @@ expected_tables="$(
   fail "V0.3 tables are missing or do not have RLS enabled"
 echo "PASS: V0.3 tables exist with RLS enabled"
 
+listing_api_columns="$(
+  docker exec supabase_db_BulkMint \
+    psql -U postgres -d postgres -X -A -t \
+    -c "select column_name
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'listing_drafts'
+          and column_name in (
+            'version',
+            'item_specifics_json',
+            'category_suggestion'
+          )
+        order by column_name;"
+)"
+
+expected_listing_api_columns="$(
+  printf '%s\n' \
+    'category_suggestion' \
+    'item_specifics_json' \
+    'version'
+)"
+
+[[ "$listing_api_columns" == "$expected_listing_api_columns" ]] ||
+  fail "listing_drafts is missing V0.3 API contract columns"
+echo "PASS: listing draft API contract columns exist"
+
 for table in \
   listing_drafts \
   pricing_sources \
@@ -310,10 +336,16 @@ run_request draft_a \
         status: "draft",
         title: "Local listing draft",
         description: "Local-only listing contract validation.",
+        item_specifics_json: {
+          game: "One Piece Card Game",
+          language: "English"
+        },
+        category_suggestion: "Collectible Card Games",
         price_amount: 12.34,
         currency: "USD",
         quantity: 1,
-        selected_pricing_observation_id: $observation_id
+        selected_pricing_observation_id: $observation_id,
+        version: 99
       }'
   )"
 expect_status 201 "owner listing draft insert"
@@ -323,9 +355,20 @@ draft_a_owner="$(jq -r '.[0].owner_id // empty' "$tmp_dir/draft_a.response")"
 [[ -n "$draft_a_id" ]] || fail "listing draft returned no ID"
 [[ "$draft_a_owner" == "$user_a_id" ]] ||
   fail "listing draft did not inherit user A ownership"
+[[ "$(jq -r '.[0].version' "$tmp_dir/draft_a.response")" == "1" ]] ||
+  fail "database did not assign listing draft version 1"
+[[ "$(jq -r '.[0].item_specifics_json.game // empty' "$tmp_dir/draft_a.response")" == "One Piece Card Game" ]] ||
+  fail "listing draft item specifics were not persisted"
+[[ "$(jq -r '.[0].category_suggestion // empty' "$tmp_dir/draft_a.response")" == "Collectible Card Games" ]] ||
+  fail "listing draft category suggestion was not persisted"
+[[ "$(jq -r '.[0].generation_model // "null"' "$tmp_dir/draft_a.response")" == "null" ]] ||
+  fail "placeholder draft unexpectedly persisted an AI model"
+[[ "$(jq -r '.[0].prompt_version // "null"' "$tmp_dir/draft_a.response")" == "null" ]] ||
+  fail "placeholder draft unexpectedly persisted a prompt version"
+echo "PASS: placeholder fields persist with version 1 and null AI metadata"
 
 run_request owner_draft_read \
-  "$api_url/rest/v1/listing_drafts?id=eq.$draft_a_id&select=id,owner_id,status" \
+  "$api_url/rest/v1/listing_drafts?id=eq.$draft_a_id&select=id,owner_id,status,version" \
   --header "apikey: $publishable_key" \
   --header "Authorization: Bearer $token_a"
 expect_status 200 "owner listing draft read"
@@ -345,12 +388,22 @@ run_request owner_draft_update \
       '{
         title: "Reviewed local listing draft",
         status: "ready",
-        ready_at: $ready_at
+        ready_at: $ready_at,
+        item_specifics_json: {
+          game: "One Piece Card Game",
+          language: "English",
+          condition: "Near Mint"
+        },
+        category_suggestion: "CCG Individual Cards"
       }'
   )"
 expect_status 200 "owner listing draft update"
 [[ "$(jq -r '.[0].status // empty' "$tmp_dir/owner_draft_update.response")" == "ready" ]] ||
   fail "owner listing draft did not become ready"
+[[ "$(jq -r '.[0].version' "$tmp_dir/owner_draft_update.response")" == "2" ]] ||
+  fail "listing draft version did not increment to 2"
+[[ "$(jq -r '.[0].item_specifics_json.condition // empty' "$tmp_dir/owner_draft_update.response")" == "Near Mint" ]] ||
+  fail "listing draft item specifics update did not persist"
 echo "PASS: owner can create, read, and update own listing draft"
 
 run_request cross_draft_read \
@@ -410,6 +463,27 @@ run_request invalid_status \
 expect_denied "invalid listing draft status"
 echo "PASS: invalid listing draft status rejected"
 
+run_request invalid_item_specifics \
+  "$api_url/rest/v1/listing_drafts" \
+  --request POST \
+  --header "apikey: $publishable_key" \
+  --header "Authorization: Bearer $token_a" \
+  --header "Content-Type: application/json" \
+  --data "$(
+    jq -nc \
+      --arg card_id "$card_a_id" \
+      '{
+        card_id: $card_id,
+        marketplace_target: "ebay",
+        status: "draft",
+        title: "Invalid item specifics",
+        description: "Must not be inserted",
+        item_specifics_json: []
+      }'
+  )"
+expect_denied "non-object listing item specifics"
+echo "PASS: non-object item specifics rejected"
+
 run_request immutable_generation_update \
   "$api_url/rest/v1/listing_drafts?id=eq.$draft_a_id" \
   --request PATCH \
@@ -419,6 +493,16 @@ run_request immutable_generation_update \
   --data '{"generation_model":"forged-model"}'
 expect_denied "immutable generation metadata update"
 echo "PASS: generation provenance columns are immutable after insert"
+
+run_request immutable_version_update \
+  "$api_url/rest/v1/listing_drafts?id=eq.$draft_a_id" \
+  --request PATCH \
+  --header "apikey: $publishable_key" \
+  --header "Authorization: Bearer $token_a" \
+  --header "Content-Type: application/json" \
+  --data '{"version":99}'
+expect_denied "client-controlled listing draft version update"
+echo "PASS: listing draft version is database-managed"
 
 run_request derived_source \
   "$api_url/rest/v1/pricing_sources" \

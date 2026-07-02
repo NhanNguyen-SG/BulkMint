@@ -1,11 +1,14 @@
 # Listing Draft Contract
 
-Status: **proposal only — not applied locally or remotely**
+Status: **implemented and validated locally — not applied remotely**
 
-The proposed SQL is
-`supabase/migrations/20260701000300_listing_pricing_contract.sql`. It changes
-database contracts only. It does not add APIs, change the OpenAI prompt, call
-eBay, or alter runtime behavior.
+The contract SQL is:
+
+- `supabase/migrations/20260701000300_listing_pricing_contract.sql`;
+- `supabase/migrations/20260701000400_align_listing_draft_api_contract.sql`.
+
+These migrations change database contracts only. They do not add APIs, change
+the OpenAI prompt, call eBay, or alter runtime behavior.
 
 ## Domain boundary
 
@@ -52,9 +55,12 @@ required before this proposal can be applied to any non-empty environment.
 | `card_id` | Required owner-scoped card relationship |
 | `analysis_job_id` | Optional analysis that originated the draft |
 | `marketplace_target` | Formatting target, initially `ebay` |
+| `version` | Database-managed revision, starting at 1 |
 | `status` | `draft`, `ready`, or `archived` |
 | `title` | Current user-reviewable title |
 | `description` | Current user-reviewable description |
+| `item_specifics_json` | Marketplace item specifics as a JSON object |
+| `category_suggestion` | Optional category suggestion for review |
 | `price_amount` | Current asking price |
 | `currency` | Three-letter uppercase currency code |
 | `quantity` | Intended listing quantity |
@@ -76,6 +82,31 @@ the generated fields and generation metadata remain unchanged. Column-level
 update grants prevent authenticated clients from changing those original
 generation fields, ownership, card linkage, or analysis linkage after insert.
 A manual draft has no generation fields.
+
+`version` is assigned by the database. Inserts always receive version 1, and
+every update increments it by one. API clients may read the value but may not
+set it. `item_specifics_json` must always be a JSON object; arrays and scalar
+JSON values are rejected.
+
+The API field `ai_model` maps to the database column `generation_model`. There
+is no duplicate `ai_model` column.
+
+## Placeholder drafts
+
+Before AI generation is implemented, the backend may create a persistence-test
+draft with:
+
+- `title = 'DRAFT PLACEHOLDER'`;
+- `description = 'DRAFT PLACEHOLDER'`;
+- `content_origin = 'manual'`;
+- `status = 'draft'`;
+- `version = 1`;
+- `item_specifics_json = {}`;
+- nullable `category_suggestion`;
+- null provider, model, prompt, generated-content, and generation-time fields.
+
+This preserves the generation metadata constraint: non-AI placeholders do not
+claim an AI provider, model, prompt, or generation event.
 
 ## Lifecycle
 
