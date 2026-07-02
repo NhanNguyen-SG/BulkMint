@@ -182,3 +182,45 @@ def test_upload_failure_cleans_object_and_metadata(
         "DELETE",
         "DELETE",
     ]
+
+
+def test_delete_card_images_removes_objects_and_metadata() -> None:
+    storage_path = f"{OWNER_ID}/{CARD_ID}/{IMAGE_ID}.png"
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+
+        if request.method == "GET" and request.url.path == "/rest/v1/card_images":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": str(IMAGE_ID),
+                        "card_id": str(CARD_ID),
+                        "storage_path": storage_path,
+                    }
+                ],
+            )
+        if request.method == "DELETE" and request.url.path.startswith(
+            "/storage/v1/object/card-images/"
+        ):
+            return httpx.Response(200)
+        if request.method == "DELETE" and request.url.path == "/rest/v1/card_images":
+            return httpx.Response(204)
+
+        return httpx.Response(500, json={"message": "unexpected request"})
+
+    storage = SupabaseImageStorage(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    storage.delete_card_images(
+        owner_id=OWNER_ID,
+        card_id=CARD_ID,
+        access_token=ACCESS_TOKEN,
+    )
+
+    assert [method for method, _path in requests] == ["GET", "DELETE", "DELETE"]

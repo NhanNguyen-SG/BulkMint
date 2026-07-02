@@ -157,3 +157,18 @@ def test_repository_raises_not_found_when_update_matches_no_rows() -> None:
             card_id=CARD_ID,
             card_update=CardUpdate.model_validate({"card_name": "Missing card"}),
         )
+
+
+def test_repository_delete_raises_not_found_when_delete_matches_no_rows() -> None:
+    repository = SupabaseCardsRepository(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=[])),
+    )
+
+    with pytest.raises(CardNotFoundError):
+        repository.delete_card(
+            owner_id=USER_ID,
+            access_token=ACCESS_TOKEN,
+            card_id=CARD_ID,
+        )

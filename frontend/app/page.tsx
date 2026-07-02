@@ -93,7 +93,14 @@ export default function Home() {
   const [editSavingId, setEditSavingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccessId, setEditSuccessId] = useState<string | null>(null);
+  const [removingCardId, setRemovingCardId] = useState<string | null>(null);
+  const [removalAction, setRemovalAction] = useState<"archive" | "delete" | null>(
+    null,
+  );
+  const [removalError, setRemovalError] = useState<string | null>(null);
+  const [removalErrorCardId, setRemovalErrorCardId] = useState<string | null>(null);
   const savingRef = useRef(false);
+  const visibleInventory = inventory.filter((card) => card.status !== "archived");
 
   async function fetchInventory() {
     setInventoryLoading(true);
@@ -240,6 +247,8 @@ export default function Home() {
     setEditingCardId(card.id);
     setEditError(null);
     setEditSuccessId(null);
+    setRemovalError(null);
+    setRemovalErrorCardId(null);
     setEditForm({
       card_name: card.card_name,
       set: card.set,
@@ -330,6 +339,81 @@ export default function Home() {
       setEditError(errorMessage(error, "Unable to update card."));
     } finally {
       setEditSavingId(null);
+    }
+  }
+
+  async function archiveCard(cardId: string) {
+    if (
+      removingCardId ||
+      !window.confirm("Archive this card? It will be hidden from the inventory list.")
+    ) {
+      return;
+    }
+
+    setRemovingCardId(cardId);
+    setRemovalAction("archive");
+    setRemovalError(null);
+    setRemovalErrorCardId(null);
+    setEditingCardId(null);
+    setEditForm(null);
+
+    try {
+      const response = await authenticatedApiFetch(`/cards/${cardId}/archive`, {
+        method: "PATCH",
+      });
+
+      if (!response.ok) {
+        throw await apiError(response, "Unable to archive card");
+      }
+
+      const archivedCard: InventoryCard = await response.json();
+      setInventory((current) =>
+        current.map((card) => (card.id === archivedCard.id ? archivedCard : card)),
+      );
+    } catch (error) {
+      console.error("Inventory archive error:", error);
+      setRemovalError(errorMessage(error, "Unable to archive card."));
+      setRemovalErrorCardId(cardId);
+    } finally {
+      setRemovingCardId(null);
+      setRemovalAction(null);
+    }
+  }
+
+  async function deleteCard(cardId: string) {
+    if (
+      removingCardId ||
+      !window.confirm(
+        "Delete this card permanently? This also removes the stored image.",
+      )
+    ) {
+      return;
+    }
+
+    setRemovingCardId(cardId);
+    setRemovalAction("delete");
+    setRemovalError(null);
+    setRemovalErrorCardId(null);
+    setEditingCardId(null);
+    setEditForm(null);
+
+    try {
+      const response = await authenticatedApiFetch(`/cards/${cardId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw await apiError(response, "Unable to delete card");
+      }
+
+      setInventory((current) => current.filter((card) => card.id !== cardId));
+    } catch (error) {
+      console.error("Inventory delete error:", error);
+      setRemovalError(errorMessage(error, "Unable to delete card."));
+      setRemovalErrorCardId(cardId);
+    } finally {
+      setRemovingCardId(null);
+      setRemovalAction(null);
     }
   }
 
@@ -448,13 +532,13 @@ export default function Home() {
               {inventoryError}
             </p>
           )}
-          {!inventoryLoading && !inventoryError && inventory.length === 0 && (
+          {!inventoryLoading && !inventoryError && visibleInventory.length === 0 && (
             <p className="text-sm text-zinc-500">No saved cards yet.</p>
           )}
 
-          {inventory.length > 0 && (
+          {visibleInventory.length > 0 && (
             <div className="space-y-4">
-              {inventory.map((card) => (
+              {visibleInventory.map((card) => (
                 <div
                   key={card.id}
                   className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
@@ -487,10 +571,30 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => startEditing(card)}
-                        disabled={editSavingId === card.id}
+                        disabled={editSavingId === card.id || removingCardId === card.id}
                         className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-green-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => archiveCard(card.id)}
+                        disabled={editSavingId === card.id || removingCardId === card.id}
+                        className="mt-2 block w-full rounded-md border border-amber-600/40 px-3 py-1.5 text-sm text-amber-300 transition hover:border-amber-400 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {removingCardId === card.id && removalAction === "archive"
+                          ? "Archiving…"
+                          : "Archive"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCard(card.id)}
+                        disabled={editSavingId === card.id || removingCardId === card.id}
+                        className="mt-2 block w-full rounded-md border border-red-700/50 px-3 py-1.5 text-sm text-red-300 transition hover:border-red-500 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {removingCardId === card.id && removalAction === "delete"
+                          ? "Deleting…"
+                          : "Delete"}
                       </button>
                     </div>
                   </div>
@@ -627,6 +731,11 @@ export default function Home() {
                   {editSuccessId === card.id && editingCardId !== card.id && (
                     <p className="mt-3 text-sm text-green-400">
                       Inventory card updated.
+                    </p>
+                  )}
+                  {removalError && removalErrorCardId === card.id && (
+                    <p role="alert" className="mt-3 text-sm text-red-400">
+                      {removalError}
                     </p>
                   )}
                 </div>

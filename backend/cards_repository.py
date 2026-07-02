@@ -123,7 +123,11 @@ class SupabaseCardsRepository:
         except ValueError as error:
             raise CardsRepositoryError("Supabase returned an invalid delete response") from error
 
-        if not isinstance(body, list) or len(body) != 1:
+        if not isinstance(body, list):
+            raise CardsRepositoryError("Supabase returned an invalid delete response")
+        if not body:
+            raise CardNotFoundError("Card not found")
+        if len(body) != 1:
             raise CardsRepositoryError("Supabase did not delete exactly one card")
 
     def update_card(

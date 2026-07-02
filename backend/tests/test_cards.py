@@ -12,7 +12,11 @@ import cards_api
 from auth import AuthenticatedUser, get_current_user
 from card_models import CardCreate, CardResponse, CardUpdate
 from cards_repository import CardNotFoundError
-from image_storage import ImageStoragePersistenceError, StoredCardImage
+from image_storage import (
+    ImageStorageDeletionError,
+    ImageStoragePersistenceError,
+    StoredCardImage,
+)
 from image_validation import ValidatedImage
 from main import app
 
@@ -46,6 +50,7 @@ class FakeCardsRepository:
         self.updated_card_id: UUID | None = None
         self.updated_card: CardUpdate | None = None
         self.raise_on_update: Exception | None = None
+        self.raise_on_delete: Exception | None = None
 
     def list_cards(self, *, owner_id: UUID, access_token: str) -> list[CardResponse]:
         self.list_owner_id = owner_id
@@ -71,6 +76,9 @@ class FakeCardsRepository:
         access_token: str,
         card_id: UUID,
     ) -> None:
+        if self.raise_on_delete is not None:
+            raise self.raise_on_delete
+
         assert owner_id == USER_ID
         assert access_token == ACCESS_TOKEN
         self.deleted_card_id = card_id
@@ -116,6 +124,8 @@ class FakeImageStorage:
         self.persisted = False
         self.fail_persistence = False
         self.persist_owner_id: UUID | None = None
+        self.deleted_card_id: UUID | None = None
+        self.raise_on_delete: Exception | None = None
 
     def attach_signed_urls(
         self,
@@ -155,6 +165,20 @@ class FakeImageStorage:
     def create_signed_url(self, **kwargs: object) -> str:
         return "http://example.test/signed-image"
 
+    def delete_card_images(
+        self,
+        *,
+        owner_id: UUID,
+        card_id: UUID,
+        access_token: str,
+    ) -> None:
+        if self.raise_on_delete is not None:
+            raise self.raise_on_delete
+
+        assert owner_id == USER_ID
+        assert access_token == ACCESS_TOKEN
+        self.deleted_card_id = card_id
+
 
 def png_image() -> bytes:
     buffer = BytesIO()
@@ -190,13 +214,15 @@ def authenticated_client(authenticated_user: AuthenticatedUser) -> Iterator[Test
     app.dependency_overrides.clear()
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "DELETE"])
 def test_cards_reject_unauthenticated_requests(method: str) -> None:
     with TestClient(app) as client:
         if method == "POST":
             response = client.post("/cards", data={"card": json.dumps(CARD_PAYLOAD)})
         elif method == "PATCH":
             response = client.patch(f"/cards/{CARD_ID}", json={"card_name": "Updated"})
+        elif method == "DELETE":
+            response = client.delete(f"/cards/{CARD_ID}")
         else:
             response = client.get("/cards")
 
@@ -340,6 +366,112 @@ def test_update_card_rejects_cross_user_access(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Card not found"
+
+
+def test_archive_card_updates_status_for_owner(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.patch(f"/cards/{CARD_ID}/archive")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "archived"
+    assert repository.updated_card is not None
+    assert repository.updated_card.status == "archived"
+
+
+def test_archive_card_is_idempotent(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archived_card = card_response.model_copy(update={"status": "archived"})
+    repository = FakeCardsRepository([archived_card])
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    first_response = authenticated_client.patch(f"/cards/{CARD_ID}/archive")
+    second_response = authenticated_client.patch(f"/cards/{CARD_ID}/archive")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["status"] == "archived"
+    assert second_response.json()["status"] == "archived"
+
+
+def test_archive_card_rejects_cross_user_access(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    repository.raise_on_update = CardNotFoundError("Card not found")
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.patch(f"/cards/{CARD_ID}/archive")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Card not found"
+
+
+def test_delete_card_cleans_up_images_and_deletes_owner_card(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.delete(f"/cards/{CARD_ID}")
+
+    assert response.status_code == 204
+    assert image_storage.deleted_card_id == CARD_ID
+    assert repository.deleted_card_id == CARD_ID
+
+
+def test_delete_card_rejects_cross_user_access(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    repository.raise_on_delete = CardNotFoundError("Card not found")
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.delete(f"/cards/{CARD_ID}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Card not found"
+
+
+def test_delete_card_returns_error_when_image_cleanup_fails(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    image_storage = FakeImageStorage()
+    image_storage.raise_on_delete = ImageStorageDeletionError("cleanup failed")
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.delete(f"/cards/{CARD_ID}")
+
+    assert response.status_code == 502
+    assert repository.deleted_card_id is None
 
 
 @pytest.mark.parametrize(

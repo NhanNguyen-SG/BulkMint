@@ -27,6 +27,10 @@ class ImageStoragePersistenceError(ImageStorageError):
         self.cleanup_complete = cleanup_complete
 
 
+class ImageStorageDeletionError(ImageStorageError):
+    """Raised when card-image cleanup cannot be completed safely."""
+
+
 @dataclass(frozen=True)
 class StoredCardImage:
     image_id: UUID
@@ -199,6 +203,80 @@ class SupabaseImageStorage:
 
         return urljoin(f"{self.supabase_url}/", signed_url)
 
+    def delete_card_images(
+        self,
+        *,
+        owner_id: UUID,
+        card_id: UUID,
+        access_token: str,
+    ) -> None:
+        for stored_image in self._list_card_images(
+            owner_id=owner_id,
+            card_id=card_id,
+            access_token=access_token,
+        ):
+            try:
+                self._delete_object(
+                    storage_path=stored_image.storage_path,
+                    access_token=access_token,
+                    allow_missing=True,
+                )
+                self._delete_metadata(
+                    image_id=stored_image.image_id,
+                    owner_id=owner_id,
+                    access_token=access_token,
+                )
+            except ImageStorageError as error:
+                try:
+                    self._mark_metadata_failed(
+                        image_id=stored_image.image_id,
+                        owner_id=owner_id,
+                        access_token=access_token,
+                    )
+                except ImageStorageError:
+                    pass
+                raise ImageStorageDeletionError("Card image cleanup failed") from error
+
+    def _list_card_images(
+        self,
+        *,
+        owner_id: UUID,
+        card_id: UUID,
+        access_token: str,
+    ) -> list[StoredCardImage]:
+        response = self._request(
+            "GET",
+            "/rest/v1/card_images",
+            access_token=access_token,
+            params={
+                "select": "id,card_id,storage_path",
+                "owner_id": f"eq.{owner_id}",
+                "card_id": f"eq.{card_id}",
+                "order": "created_at.desc",
+            },
+        )
+        body = self._json(response)
+        if not isinstance(body, list):
+            raise ImageStorageError("Supabase returned invalid image metadata")
+
+        images: list[StoredCardImage] = []
+        for row in body:
+            if not isinstance(row, dict):
+                raise ImageStorageError("Supabase returned invalid image metadata")
+
+            try:
+                images.append(
+                    StoredCardImage(
+                        image_id=UUID(str(row["id"])),
+                        card_id=UUID(str(row["card_id"])),
+                        storage_path=str(row["storage_path"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise ImageStorageError("Supabase returned invalid image metadata") from error
+
+        return images
+
     def _insert_pending_metadata(
         self,
         *,
@@ -265,13 +343,24 @@ class SupabaseImageStorage:
             json={"status": "active"},
         )
 
-    def _delete_object(self, *, storage_path: str, access_token: str) -> None:
+    def _delete_object(
+        self,
+        *,
+        storage_path: str,
+        access_token: str,
+        allow_missing: bool = False,
+    ) -> None:
         encoded_path = quote(storage_path, safe="/")
-        self._request(
-            "DELETE",
-            f"/storage/v1/object/{CARD_IMAGES_BUCKET}/{encoded_path}",
-            access_token=access_token,
-        )
+        try:
+            self._request(
+                "DELETE",
+                f"/storage/v1/object/{CARD_IMAGES_BUCKET}/{encoded_path}",
+                access_token=access_token,
+            )
+        except ImageStorageError as error:
+            if allow_missing and self._is_not_found_error(error):
+                return
+            raise
 
     def _delete_metadata(
         self,
@@ -400,6 +489,14 @@ class SupabaseImageStorage:
             return response.json()
         except ValueError as error:
             raise ImageStorageError("Supabase returned invalid JSON") from error
+
+    @staticmethod
+    def _is_not_found_error(error: ImageStorageError) -> bool:
+        cause = error.__cause__
+        if not isinstance(cause, httpx.HTTPStatusError):
+            return False
+
+        return cause.response.status_code == 404
 
 
 @lru_cache

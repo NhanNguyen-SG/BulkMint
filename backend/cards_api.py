@@ -15,6 +15,7 @@ from cards_repository import (
 from image_storage import (
     CARD_IMAGES_BUCKET,
     ImageStorageConfigurationError,
+    ImageStorageDeletionError,
     ImageStorageError,
     ImageStoragePersistenceError,
     get_image_storage,
@@ -89,6 +90,58 @@ def list_cards(
         raise repository_error(error) from error
 
     return cards
+
+
+@router.patch("/{card_id}/archive", response_model=CardResponse)
+def archive_card(
+    card_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CardResponse:
+    try:
+        archived_card = get_cards_repository().update_card(
+            owner_id=user.user_id,
+            access_token=user.access_token,
+            card_id=card_id,
+            card_update=CardUpdate(status="archived"),
+        )
+        return attach_card_images(cards=[archived_card], user=user)[0]
+    except (
+        CardNotFoundError,
+        CardsRepositoryConfigurationError,
+        CardsRepositoryError,
+        ImageStorageConfigurationError,
+        ImageStorageError,
+    ) as error:
+        raise repository_error(error) from error
+
+
+@router.delete("/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_card(
+    card_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> None:
+    try:
+        image_storage = get_image_storage()
+        repository = get_cards_repository()
+        image_storage.delete_card_images(
+            owner_id=user.user_id,
+            card_id=card_id,
+            access_token=user.access_token,
+        )
+        repository.delete_card(
+            owner_id=user.user_id,
+            access_token=user.access_token,
+            card_id=card_id,
+        )
+    except (
+        CardNotFoundError,
+        CardsRepositoryConfigurationError,
+        CardsRepositoryError,
+        ImageStorageConfigurationError,
+        ImageStorageDeletionError,
+        ImageStorageError,
+    ) as error:
+        raise repository_error(error) from error
 
 
 @router.post("", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
