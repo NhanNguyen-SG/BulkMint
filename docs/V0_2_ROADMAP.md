@@ -1,8 +1,33 @@
 # BulkMint V0.2 Roadmap
 
-Status: **planning only — no V0.2 features are implemented**
+Status: **completed — released as `v0.2.0`**
 
-## Goal
+## Release outcome
+
+V0.2 was completed and tagged at commit
+`cc5f0815feed79641575588367a8cf2840a6ed21`.
+
+Delivered:
+
+- private, owner-scoped card image storage through FastAPI;
+- short-lived signed image URLs for inventory display;
+- compensating cleanup for failed image persistence and card deletion;
+- owner-scoped inventory editing with explicit mutable fields;
+- reversible archive and confirmed permanent deletion;
+- server-side card-name search and set, rarity, and status filters;
+- archived cards hidden by default;
+- bounded inventory responses with a default limit of 50 and maximum of 100;
+- frontend search/filter controls and clear loading, empty, and error states.
+
+The release retained FastAPI as the application boundary and Supabase Auth as
+the browser's only direct Supabase integration. Storage and RLS behavior was
+validated locally. No remote Supabase migration or RLS rollout was performed.
+
+Composite cursor pagination and card-number search were intentionally deferred.
+The current bounded response avoids an unsafe partial cursor design; stable
+keyset pagination should use both `created_at` and `id`.
+
+## Original goal
 
 V0.2 should make the authenticated inventory useful beyond the single-card
 creation flow by adding:
@@ -40,22 +65,22 @@ V0.2 should not include:
 - mobile applications;
 - remote migration or RLS activation without a separate reviewed rollout.
 
-## Prerequisites
+## Implementation constraints
 
-Before feature implementation:
+The implementation followed these constraints:
 
 1. Keep all schema and Storage work local until separately approved.
 2. Confirm the normalized card contract is the canonical contract.
-3. Define generated Supabase TypeScript/Python data contracts or equivalent
-   explicit API models.
-4. Decide whether user-facing delete means archive, permanent deletion, or
-   both.
-5. Define image retention behavior when analysis, card creation, or deletion
-   fails.
+3. Use explicit Pydantic and TypeScript API models.
+4. Support both reversible archive and confirmed permanent deletion.
+5. Apply compensating image cleanup when card creation or deletion fails.
 6. Preserve owner filtering in FastAPI and the authenticated user JWT on every
    Supabase request.
 
-## Recommended implementation order
+## Original implementation order
+
+The sections below retain the implementation plan for historical context. The
+release outcome above is authoritative where the delivered scope differs.
 
 ### 1. Image storage foundation
 
@@ -189,12 +214,12 @@ Every V0.2 increment should include:
 - local validation before any remote change;
 - migration and rollback documentation for schema or Storage changes.
 
-## Release gate
+## Release gate result
 
-V0.2 is ready to tag only when:
+The V0.2 release gate passed:
 
-1. Image upload, retrieval, and cleanup pass local ownership tests.
-2. Edit and delete actions cannot cross ownership boundaries.
-3. Search/filter responses are paginated and owner-scoped.
-4. The complete single-card workflow still passes.
+1. Image upload, retrieval, and cleanup passed local ownership tests.
+2. Edit, archive, and delete actions are owner-scoped.
+3. Search/filter responses are bounded and owner-scoped.
+4. Backend tests, Ruff, mypy, frontend lint, and frontend build passed.
 5. Remote migration and RLS rollout remain separately approved and documented.
