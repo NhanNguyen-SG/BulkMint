@@ -6,6 +6,7 @@ import {
   AuthenticationRequiredError,
 } from "@/lib/api/authenticated-fetch";
 import { AuthStatus } from "./components/auth-status";
+import { ListingDraftPanel } from "./components/listing-draft-panel";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -119,6 +120,7 @@ export default function Home() {
   const [appliedFilters, setAppliedFilters] = useState<InventoryFilters>(
     EMPTY_INVENTORY_FILTERS,
   );
+  const [draftCardId, setDraftCardId] = useState<string | null>(null);
   const savingRef = useRef(false);
 
   const fetchInventory = useCallback(async (filters: InventoryFilters) => {
@@ -411,6 +413,7 @@ export default function Home() {
       }
 
       const archivedCard: InventoryCard = await response.json();
+      if (draftCardId === cardId) setDraftCardId(null);
       setInventory((current) => {
         if (appliedFilters.status === "archived") {
           return current.map((card) =>
@@ -456,6 +459,7 @@ export default function Home() {
       }
 
       setInventory((current) => current.filter((card) => card.id !== cardId));
+      if (draftCardId === cardId) setDraftCardId(null);
     } catch (error) {
       console.error("Inventory delete error:", error);
       setRemovalError(errorMessage(error, "Unable to delete card."));
@@ -700,6 +704,16 @@ export default function Home() {
                       >
                         Edit
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setDraftCardId(card.id)}
+                        disabled={
+                          editSavingId === card.id || removingCardId === card.id
+                        }
+                        className="mt-2 block w-full rounded-md border border-green-700/60 px-3 py-1.5 text-sm text-green-300 transition hover:border-green-500 hover:text-green-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Generate Draft
+                      </button>
                       {card.status !== "archived" && (
                         <button
                           type="button"
@@ -727,6 +741,16 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
+
+                  {draftCardId === card.id && (
+                    <ListingDraftPanel
+                      cardId={card.id}
+                      cardName={card.card_name}
+                      initialPrice={card.price_amount}
+                      currency={card.currency}
+                      onClose={() => setDraftCardId(null)}
+                    />
+                  )}
 
                   {editingCardId === card.id && editForm && (
                     <div className="mt-4 border-t border-zinc-800 pt-4">
