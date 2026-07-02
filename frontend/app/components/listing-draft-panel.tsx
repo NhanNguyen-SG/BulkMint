@@ -40,8 +40,6 @@ type DraftForm = {
 type ListingDraftPanelProps = {
   cardId: string;
   cardName: string;
-  initialPrice: number | string | null;
-  currency: string;
   onClose: () => void;
 };
 
@@ -87,8 +85,6 @@ function formFromDraft(draft: ListingDraft): DraftForm {
 export function ListingDraftPanel({
   cardId,
   cardName,
-  initialPrice,
-  currency,
   onClose,
 }: ListingDraftPanelProps) {
   const [drafts, setDrafts] = useState<ListingDraft[]>([]);
@@ -148,25 +144,13 @@ export function ListingDraftPanel({
     setSuccess(null);
     setCopySuccess(null);
 
-    const numericPrice =
-      initialPrice === null || initialPrice === ""
-        ? null
-        : Number(initialPrice);
-    const payload: Record<string, unknown> = {
-      item_specifics_json: {},
-    };
-    if (numericPrice !== null && Number.isFinite(numericPrice) && numericPrice >= 0) {
-      payload.price_amount = numericPrice;
-      payload.currency = currency;
-    }
-
     try {
       const response = await authenticatedApiFetch(
         `/cards/${cardId}/listing-drafts`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({}),
         },
       );
       if (!response.ok) {
@@ -182,7 +166,7 @@ export function ListingDraftPanel({
     } finally {
       setGenerating(false);
     }
-  }, [cardId, currency, generating, initialPrice, loadDrafts]);
+  }, [cardId, generating, loadDrafts]);
 
   useEffect(() => {
     if (generatedCardRef.current === cardId) return;

@@ -746,8 +746,6 @@ export default function Home() {
                     <ListingDraftPanel
                       cardId={card.id}
                       cardName={card.card_name}
-                      initialPrice={card.price_amount}
-                      currency={card.currency}
                       onClose={() => setDraftCardId(null)}
                     />
                   )}

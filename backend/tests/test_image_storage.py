@@ -138,6 +138,67 @@ def test_attach_signed_url_returns_private_image(
     )
 
 
+def test_get_card_image_for_generation_downloads_owned_active_front_image() -> None:
+    storage_path = f"{OWNER_ID}/{CARD_ID}/{IMAGE_ID}.png"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rest/v1/card_images":
+            assert request.url.params["owner_id"] == f"eq.{OWNER_ID}"
+            assert request.url.params["card_id"] == f"eq.{CARD_ID}"
+            assert request.url.params["status"] == "eq.active"
+            assert request.url.params["image_kind"] == "eq.front"
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "storage_bucket": "card-images",
+                        "storage_path": storage_path,
+                        "mime_type": "image/png",
+                    }
+                ],
+            )
+        if request.url.path.startswith(
+            "/storage/v1/object/authenticated/card-images/"
+        ):
+            assert request.headers["authorization"] == f"Bearer {ACCESS_TOKEN}"
+            return httpx.Response(200, content=b"stored-card-image")
+        return httpx.Response(500, json={"message": "unexpected request"})
+
+    storage = SupabaseImageStorage(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(handler),
+    )
+    image = storage.get_card_image_for_generation(
+        owner_id=OWNER_ID,
+        card_id=CARD_ID,
+        access_token=ACCESS_TOKEN,
+    )
+
+    assert image is not None
+    assert image.content == b"stored-card-image"
+    assert image.content_type == "image/png"
+
+
+def test_get_card_image_for_generation_returns_none_without_metadata() -> None:
+    storage = SupabaseImageStorage(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=[])
+        ),
+    )
+
+    assert (
+        storage.get_card_image_for_generation(
+            owner_id=OWNER_ID,
+            card_id=CARD_ID,
+            access_token=ACCESS_TOKEN,
+        )
+        is None
+    )
+
+
 def test_upload_failure_cleans_object_and_metadata(
     image: ValidatedImage,
 ) -> None:

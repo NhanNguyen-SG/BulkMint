@@ -9,8 +9,18 @@ from audit_repository import (
     get_audit_repository,
 )
 from auth import AuthenticatedUser, get_current_user
+from image_storage import (
+    ImageStorageConfigurationError,
+    ImageStorageError,
+    get_image_storage,
+)
+from listing_generation import (
+    ListingGenerationConfigurationError,
+    ListingGenerationError,
+    get_listing_generation_service,
+)
 from listing_models import (
-    ListingDraftCreate,
+    ListingDraftGenerationRequest,
     ListingDraftResponse,
     ListingDraftUpdate,
 )
@@ -42,6 +52,8 @@ def listing_error(error: Exception) -> HTTPException:
         error,
         (
             AuditRepositoryConfigurationError,
+            ImageStorageConfigurationError,
+            ListingGenerationConfigurationError,
             ListingRepositoryConfigurationError,
             PricingRepositoryConfigurationError,
         ),
@@ -68,26 +80,41 @@ def audit_data(draft: ListingDraftResponse) -> dict[str, object]:
 def create_listing_draft(
     card_id: UUID,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    draft: Annotated[ListingDraftCreate, Body()] = ListingDraftCreate(),
+    _request: Annotated[
+        ListingDraftGenerationRequest,
+        Body(),
+    ] = ListingDraftGenerationRequest(),
 ) -> ListingDraftResponse:
     try:
         repository = get_listing_repository()
         audit_repository = get_audit_repository()
-        repository.assert_card_owned(
+        card = repository.get_card_context(
             owner_id=user.user_id,
             access_token=user.access_token,
             card_id=card_id,
+        )
+        image = get_image_storage().get_card_image_for_generation(
+            owner_id=user.user_id,
+            card_id=card_id,
+            access_token=user.access_token,
+        )
+        draft = get_listing_generation_service().generate(
+            card=card,
+            image=image,
         )
 
         selected_observation_id = None
         if draft.price_amount is not None:
             selected_observation_id = (
-                get_pricing_repository().create_manual_observation(
+                get_pricing_repository().create_ai_estimate(
                     owner_id=user.user_id,
                     access_token=user.access_token,
                     card_id=card_id,
                     price_amount=draft.price_amount,
                     currency=draft.currency,
+                    condition=draft.condition_summary,
+                    model=draft.generation_model,
+                    prompt_version=draft.prompt_version,
                 )
             )
 
@@ -110,6 +137,10 @@ def create_listing_draft(
     except (
         AuditRepositoryConfigurationError,
         AuditRepositoryError,
+        ImageStorageConfigurationError,
+        ImageStorageError,
+        ListingGenerationConfigurationError,
+        ListingGenerationError,
         ListingCardNotFoundError,
         ListingDraftNotFoundError,
         ListingRepositoryConfigurationError,

@@ -8,13 +8,18 @@ from fastapi.testclient import TestClient
 
 import listing_api
 from auth import AuthenticatedUser, get_current_user
+from image_storage import CardImageForGeneration
+from listing_generation import LISTING_PROMPT_VERSION
 from listing_models import (
-    PLACEHOLDER_TEXT,
     ListingDraftCreate,
     ListingDraftResponse,
     ListingDraftUpdate,
 )
-from listing_repository import ListingCardNotFoundError, ListingDraftNotFoundError
+from listing_repository import (
+    ListingCardContext,
+    ListingCardNotFoundError,
+    ListingDraftNotFoundError,
+)
 from main import app
 
 USER_ID = UUID("7b3fc397-08da-4fc2-b6fd-ed760f6f51be")
@@ -48,6 +53,29 @@ class FakeListingRepository:
         assert access_token == ACCESS_TOKEN
         self.card_checked = card_id
 
+    def get_card_context(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+    ) -> ListingCardContext:
+        self.assert_card_owned(
+            owner_id=owner_id,
+            access_token=access_token,
+            card_id=card_id,
+        )
+        return ListingCardContext(
+            card_id=card_id,
+            card_name="Monkey D. Luffy",
+            set_name="Romance Dawn",
+            card_number="OP01-024",
+            rarity="Rare",
+            condition_guess="Near Mint",
+            price_amount=Decimal("12.34"),
+            currency="USD",
+        )
+
     def create_draft(
         self,
         *,
@@ -64,11 +92,16 @@ class FakeListingRepository:
         self.created_observation_id = selected_pricing_observation_id
         return self.draft.model_copy(
             update={
+                "title": draft.title,
+                "description": draft.description,
                 "item_specifics_json": draft.item_specifics_json,
                 "category_suggestion": draft.category_suggestion,
                 "price_amount": draft.price_amount,
                 "currency": draft.currency,
                 "selected_pricing_observation_id": selected_pricing_observation_id,
+                "content_origin": "ai_generated",
+                "prompt_version": draft.prompt_version,
+                "ai_model": draft.generation_model,
             }
         )
 
@@ -147,6 +180,10 @@ class FakePricingRepository:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
+    def create_ai_estimate(self, **kwargs: object) -> UUID:
+        self.calls.append(kwargs)
+        return OBSERVATION_ID
+
     def create_manual_observation(self, **kwargs: object) -> UUID:
         self.calls.append(kwargs)
         return OBSERVATION_ID
@@ -160,6 +197,48 @@ class FakeAuditRepository:
         self.events.append(kwargs)
 
 
+class FakeImageStorage:
+    def __init__(self) -> None:
+        self.image = CardImageForGeneration(
+            content=b"test-card-image",
+            content_type="image/png",
+        )
+        self.calls: list[dict[str, object]] = []
+
+    def get_card_image_for_generation(self, **kwargs: object) -> CardImageForGeneration:
+        self.calls.append(kwargs)
+        return self.image
+
+
+class FakeGenerationService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs: object) -> ListingDraftCreate:
+        self.calls.append(kwargs)
+        return ListingDraftCreate.model_validate(
+            {
+                "title": "Monkey D. Luffy OP01-024 Rare",
+                "description": "AI-generated review draft for the saved card.",
+                "condition_summary": "Appears Near Mint; review the image.",
+                "item_specifics_json": {
+                    "condition_summary": "Appears Near Mint; review the image.",
+                    "item_specifics": {
+                        "Game": "One Piece Card Game",
+                        "Set": "Romance Dawn",
+                    },
+                    "keywords": ["Luffy", "OP01-024", "Romance Dawn"],
+                },
+                "category_suggestion": "Collectible Card Games",
+                "price_amount": "12.34",
+                "currency": "USD",
+                "generation_model": "gpt-4.1-mini",
+                "prompt_version": LISTING_PROMPT_VERSION,
+                "generated_at": datetime(2026, 7, 2, tzinfo=UTC),
+            }
+        )
+
+
 @pytest.fixture
 def draft_response() -> ListingDraftResponse:
     return ListingDraftResponse.model_validate(
@@ -169,17 +248,21 @@ def draft_response() -> ListingDraftResponse:
             "marketplace_target": "ebay",
             "version": 1,
             "status": "draft",
-            "title": PLACEHOLDER_TEXT,
-            "description": PLACEHOLDER_TEXT,
-            "item_specifics_json": {},
-            "category_suggestion": None,
-            "price_amount": None,
+            "title": "Monkey D. Luffy OP01-024 Rare",
+            "description": "AI-generated review draft for the saved card.",
+            "item_specifics_json": {
+                "condition_summary": "Appears Near Mint; review the image.",
+                "item_specifics": {"Game": "One Piece Card Game"},
+                "keywords": ["Luffy", "OP01-024"],
+            },
+            "category_suggestion": "Collectible Card Games",
+            "price_amount": "12.34",
             "currency": "USD",
             "quantity": 1,
-            "selected_pricing_observation_id": None,
-            "content_origin": "manual",
-            "prompt_version": None,
-            "ai_model": None,
+            "selected_pricing_observation_id": OBSERVATION_ID,
+            "content_origin": "ai_generated",
+            "prompt_version": LISTING_PROMPT_VERSION,
+            "ai_model": "gpt-4.1-mini",
             "created_at": datetime(2026, 7, 1, tzinfo=UTC),
             "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
         }
@@ -218,7 +301,7 @@ def test_listing_endpoints_reject_anonymous(
     assert response.status_code == 401
 
 
-def test_create_placeholder_draft_with_price_and_audit(
+def test_create_ai_draft_with_image_price_and_audit(
     authenticated_client: TestClient,
     draft_response: ListingDraftResponse,
     monkeypatch: pytest.MonkeyPatch,
@@ -226,29 +309,34 @@ def test_create_placeholder_draft_with_price_and_audit(
     repository = FakeListingRepository(draft_response)
     pricing = FakePricingRepository()
     audit = FakeAuditRepository()
+    images = FakeImageStorage()
+    generation = FakeGenerationService()
     monkeypatch.setattr(listing_api, "get_listing_repository", lambda: repository)
     monkeypatch.setattr(listing_api, "get_pricing_repository", lambda: pricing)
     monkeypatch.setattr(listing_api, "get_audit_repository", lambda: audit)
+    monkeypatch.setattr(listing_api, "get_image_storage", lambda: images)
+    monkeypatch.setattr(
+        listing_api,
+        "get_listing_generation_service",
+        lambda: generation,
+    )
 
     response = authenticated_client.post(
         f"/cards/{CARD_ID}/listing-drafts",
-        json={
-            "item_specifics_json": {"Game": "One Piece Card Game"},
-            "category_suggestion": "Collectible Card Games",
-            "price_amount": "12.34",
-            "currency": "usd",
-        },
+        json={},
     )
 
     assert response.status_code == 201
-    assert response.json()["title"] == PLACEHOLDER_TEXT
-    assert response.json()["description"] == PLACEHOLDER_TEXT
+    assert response.json()["title"] == "Monkey D. Luffy OP01-024 Rare"
     assert response.json()["version"] == 1
-    assert response.json()["ai_model"] is None
-    assert response.json()["prompt_version"] is None
+    assert response.json()["ai_model"] == "gpt-4.1-mini"
+    assert response.json()["prompt_version"] == LISTING_PROMPT_VERSION
     assert repository.card_checked == CARD_ID
     assert repository.created_observation_id == OBSERVATION_ID
     assert pricing.calls[0]["price_amount"] == Decimal("12.34")
+    assert pricing.calls[0]["model"] == "gpt-4.1-mini"
+    assert pricing.calls[0]["prompt_version"] == LISTING_PROMPT_VERSION
+    assert generation.calls[0]["image"] == images.image
     assert audit.events[0]["action"] == "listing_draft.created"
     assert audit.events[0]["draft_id"] == DRAFT_ID
 
@@ -323,6 +411,12 @@ def test_cross_user_listing_access_returns_not_found(
         listing_api,
         "get_audit_repository",
         lambda: FakeAuditRepository(),
+    )
+    monkeypatch.setattr(listing_api, "get_image_storage", FakeImageStorage)
+    monkeypatch.setattr(
+        listing_api,
+        "get_listing_generation_service",
+        FakeGenerationService,
     )
 
     if operation == "create":

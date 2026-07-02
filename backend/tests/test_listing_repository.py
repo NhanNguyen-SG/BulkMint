@@ -25,17 +25,21 @@ DRAFT_ROW = {
     "marketplace_target": "ebay",
     "version": 1,
     "status": "draft",
-    "title": "DRAFT PLACEHOLDER",
-    "description": "DRAFT PLACEHOLDER",
-    "item_specifics_json": {"Game": "One Piece Card Game"},
+    "title": "Roronoa Zoro OP01-025 Rare",
+    "description": "AI-generated review draft.",
+    "item_specifics_json": {
+        "condition_summary": "Appears Near Mint; verify before listing.",
+        "item_specifics": {"Game": "One Piece Card Game"},
+        "keywords": ["Zoro", "OP01-025"],
+    },
     "category_suggestion": "Collectible Card Games",
     "price_amount": 12.34,
     "currency": "USD",
     "quantity": 1,
     "selected_pricing_observation_id": str(OBSERVATION_ID),
-    "content_origin": "manual",
-    "prompt_version": None,
-    "generation_model": None,
+    "content_origin": "ai_generated",
+    "prompt_version": "listing-draft-v1",
+    "generation_model": "gpt-4.1-mini",
     "created_at": NOW,
     "updated_at": NOW,
     "ready_at": None,
@@ -43,7 +47,7 @@ DRAFT_ROW = {
 }
 
 
-def test_repository_creates_owner_placeholder_draft() -> None:
+def test_repository_creates_owner_ai_draft() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         assert request.url.path == "/rest/v1/listing_drafts"
@@ -51,13 +55,17 @@ def test_repository_creates_owner_placeholder_draft() -> None:
         payload = json.loads(request.content)
         assert payload["owner_id"] == str(USER_ID)
         assert payload["card_id"] == str(CARD_ID)
-        assert payload["title"] == "DRAFT PLACEHOLDER"
-        assert payload["description"] == "DRAFT PLACEHOLDER"
-        assert payload["content_origin"] == "manual"
-        assert payload["item_specifics_json"] == {"Game": "One Piece Card Game"}
+        assert payload["title"] == "Roronoa Zoro OP01-025 Rare"
+        assert payload["description"] == "AI-generated review draft."
+        assert payload["content_origin"] == "ai_generated"
+        assert payload["item_specifics_json"]["keywords"] == ["Zoro", "OP01-025"]
         assert payload["selected_pricing_observation_id"] == str(OBSERVATION_ID)
         assert "version" not in payload
-        assert "generation_model" not in payload
+        assert payload["generation_provider"] == "openai"
+        assert payload["generation_model"] == "gpt-4.1-mini"
+        assert payload["prompt_version"] == "listing-draft-v1"
+        assert payload["generated_title"] == payload["title"]
+        assert payload["generated_description"] == payload["description"]
         return httpx.Response(201, json=[DRAFT_ROW])
 
     repository = SupabaseListingRepository(
@@ -71,10 +79,20 @@ def test_repository_creates_owner_placeholder_draft() -> None:
         card_id=CARD_ID,
         draft=ListingDraftCreate.model_validate(
             {
-                "item_specifics_json": {"Game": "One Piece Card Game"},
+                "title": "Roronoa Zoro OP01-025 Rare",
+                "description": "AI-generated review draft.",
+                "condition_summary": "Appears Near Mint; verify before listing.",
+                "item_specifics_json": {
+                    "condition_summary": "Appears Near Mint; verify before listing.",
+                    "item_specifics": {"Game": "One Piece Card Game"},
+                    "keywords": ["Zoro", "OP01-025"],
+                },
                 "category_suggestion": "Collectible Card Games",
                 "price_amount": "12.34",
                 "currency": "USD",
+                "generation_model": "gpt-4.1-mini",
+                "prompt_version": "listing-draft-v1",
+                "generated_at": NOW,
             }
         ),
         selected_pricing_observation_id=OBSERVATION_ID,
@@ -82,7 +100,43 @@ def test_repository_creates_owner_placeholder_draft() -> None:
 
     assert draft.id == DRAFT_ID
     assert draft.version == 1
-    assert draft.ai_model is None
+    assert draft.ai_model == "gpt-4.1-mini"
+
+
+def test_repository_loads_owner_card_context() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/v1/cards"
+        assert request.url.params["owner_id"] == f"eq.{USER_ID}"
+        assert request.url.params["id"] == f"eq.{CARD_ID}"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": str(CARD_ID),
+                    "card_name": "Roronoa Zoro",
+                    "set_name": "Romance Dawn",
+                    "card_number": "OP01-025",
+                    "rarity": "Rare",
+                    "condition_guess": "Near Mint",
+                    "price_amount": 12.34,
+                    "currency": "USD",
+                }
+            ],
+        )
+
+    repository = SupabaseListingRepository(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    card = repository.get_card_context(
+        owner_id=USER_ID,
+        access_token=ACCESS_TOKEN,
+        card_id=CARD_ID,
+    )
+
+    assert card.card_name == "Roronoa Zoro"
+    assert str(card.price_amount) == "12.34"
 
 
 def test_repository_lists_only_owner_card_drafts() -> None:

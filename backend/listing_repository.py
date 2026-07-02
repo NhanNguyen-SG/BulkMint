@@ -1,4 +1,6 @@
 import os
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from uuid import UUID
 
@@ -36,6 +38,31 @@ LISTING_DRAFT_COLUMNS = ",".join(
         "archived_at",
     )
 )
+
+LISTING_CARD_COLUMNS = ",".join(
+    (
+        "id",
+        "card_name",
+        "set_name",
+        "card_number",
+        "rarity",
+        "condition_guess",
+        "price_amount",
+        "currency",
+    )
+)
+
+
+@dataclass(frozen=True)
+class ListingCardContext:
+    card_id: UUID
+    card_name: str
+    set_name: str | None
+    card_number: str | None
+    rarity: str | None
+    condition_guess: str | None
+    price_amount: Decimal | None
+    currency: str
 
 
 class ListingRepositoryConfigurationError(RuntimeError):
@@ -87,12 +114,62 @@ class SupabaseListingRepository:
         access_token: str,
         card_id: UUID,
     ) -> None:
+        self._get_card_row(
+            owner_id=owner_id,
+            access_token=access_token,
+            card_id=card_id,
+            select="id",
+        )
+
+    def get_card_context(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+    ) -> ListingCardContext:
+        row = self._get_card_row(
+            owner_id=owner_id,
+            access_token=access_token,
+            card_id=card_id,
+            select=LISTING_CARD_COLUMNS,
+        )
+        try:
+            raw_price = row.get("price_amount")
+            price_amount = (
+                Decimal(str(raw_price)) if raw_price is not None else None
+            )
+            return ListingCardContext(
+                card_id=UUID(str(row["id"])),
+                card_name=str(row["card_name"]),
+                set_name=self._optional_string(row.get("set_name")),
+                card_number=self._optional_string(row.get("card_number")),
+                rarity=self._optional_string(row.get("rarity")),
+                condition_guess=self._optional_string(
+                    row.get("condition_guess")
+                ),
+                price_amount=price_amount,
+                currency=str(row.get("currency") or "USD"),
+            )
+        except (KeyError, TypeError, ValueError, InvalidOperation) as error:
+            raise ListingRepositoryError(
+                "Supabase returned invalid listing card data"
+            ) from error
+
+    def _get_card_row(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+        select: str,
+    ) -> dict[str, object]:
         response = self._request(
             "GET",
             "/rest/v1/cards",
             access_token=access_token,
             params={
-                "select": "id",
+                "select": select,
                 "id": f"eq.{card_id}",
                 "owner_id": f"eq.{owner_id}",
                 "limit": "1",
@@ -101,6 +178,10 @@ class SupabaseListingRepository:
         body = self._parse_list(response)
         if not body:
             raise ListingCardNotFoundError("Card not found")
+        row = body[0]
+        if not isinstance(row, dict):
+            raise ListingRepositoryError("Supabase returned invalid listing card data")
+        return row
 
     def create_draft(
         self,
@@ -264,6 +345,10 @@ class SupabaseListingRepository:
                 "Supabase did not return exactly one created listing draft"
             )
         return drafts[0]
+
+    @staticmethod
+    def _optional_string(value: object) -> str | None:
+        return str(value) if value is not None else None
 
 
 @lru_cache

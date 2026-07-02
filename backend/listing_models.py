@@ -3,11 +3,10 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from card_models import CurrencyCode, PriceAmount
 
-PLACEHOLDER_TEXT = "DRAFT PLACEHOLDER"
 ListingDraftStatus = Literal["draft", "ready", "archived"]
 DraftTitle = Annotated[
     str,
@@ -26,10 +25,16 @@ CategorySuggestion = Annotated[
 class ListingDraftCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    item_specifics_json: dict[str, Any] = Field(default_factory=dict)
-    category_suggestion: CategorySuggestion | None = None
+    title: DraftTitle
+    description: DraftDescription
+    condition_summary: str
+    item_specifics_json: dict[str, Any]
+    category_suggestion: CategorySuggestion
     price_amount: PriceAmount | None = None
     currency: CurrencyCode = "USD"
+    generation_model: str
+    prompt_version: str
+    generated_at: datetime
 
     def to_database_payload(
         self,
@@ -43,8 +48,8 @@ class ListingDraftCreate(BaseModel):
             "card_id": str(card_id),
             "marketplace_target": "ebay",
             "status": "draft",
-            "title": PLACEHOLDER_TEXT,
-            "description": PLACEHOLDER_TEXT,
+            "title": self.title,
+            "description": self.description,
             "item_specifics_json": self.item_specifics_json,
             "category_suggestion": self.category_suggestion,
             "price_amount": (
@@ -57,8 +62,18 @@ class ListingDraftCreate(BaseModel):
                 if selected_pricing_observation_id is not None
                 else None
             ),
-            "content_origin": "manual",
+            "content_origin": "ai_generated",
+            "generated_title": self.title,
+            "generated_description": self.description,
+            "generation_provider": "openai",
+            "generation_model": self.generation_model,
+            "prompt_version": self.prompt_version,
+            "generated_at": self.generated_at.isoformat(),
         }
+
+
+class ListingDraftGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class ListingDraftUpdate(BaseModel):

@@ -38,6 +38,12 @@ class StoredCardImage:
     storage_path: str
 
 
+@dataclass(frozen=True)
+class CardImageForGeneration:
+    content: bytes
+    content_type: str
+
+
 class SupabaseImageStorage:
     def __init__(
         self,
@@ -175,6 +181,59 @@ class SupabaseImageStorage:
             images_by_card[card_id] = (image_id, signed_url)
 
         return images_by_card
+
+    def get_card_image_for_generation(
+        self,
+        *,
+        owner_id: UUID,
+        card_id: UUID,
+        access_token: str,
+    ) -> CardImageForGeneration | None:
+        response = self._request(
+            "GET",
+            "/rest/v1/card_images",
+            access_token=access_token,
+            params={
+                "select": "storage_bucket,storage_path,mime_type",
+                "owner_id": f"eq.{owner_id}",
+                "card_id": f"eq.{card_id}",
+                "status": "eq.active",
+                "image_kind": "eq.front",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+        )
+        body = self._json(response)
+        if not isinstance(body, list):
+            raise ImageStorageError("Supabase returned invalid image metadata")
+        if not body:
+            return None
+
+        row = body[0]
+        if not isinstance(row, dict):
+            raise ImageStorageError("Supabase returned invalid image metadata")
+        try:
+            bucket = str(row["storage_bucket"])
+            storage_path = str(row["storage_path"])
+            content_type = str(row["mime_type"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ImageStorageError("Supabase returned invalid image metadata") from error
+
+        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise ImageStorageError("Card image has an unsupported MIME type")
+
+        encoded_path = quote(storage_path, safe="/")
+        image_response = self._request(
+            "GET",
+            f"/storage/v1/object/authenticated/{bucket}/{encoded_path}",
+            access_token=access_token,
+        )
+        if not image_response.content:
+            raise ImageStorageError("Stored card image is empty")
+        return CardImageForGeneration(
+            content=image_response.content,
+            content_type=content_type,
+        )
 
     def create_signed_url(
         self,

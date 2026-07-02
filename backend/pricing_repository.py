@@ -7,6 +7,7 @@ from uuid import UUID
 import httpx
 
 MANUAL_LISTING_SOURCE = "BulkMint listing draft manual price"
+AI_LISTING_SOURCE = "BulkMint AI listing estimate"
 
 
 class PricingRepositoryConfigurationError(RuntimeError):
@@ -52,9 +53,11 @@ class SupabasePricingRepository:
         price_amount: Decimal,
         currency: str,
     ) -> UUID:
-        source_id = self._get_or_create_manual_source(
+        source_id = self._get_or_create_source(
             owner_id=owner_id,
             access_token=access_token,
+            source_type="manual",
+            source_name=MANUAL_LISTING_SOURCE,
         )
         response = self._request(
             "POST",
@@ -74,11 +77,53 @@ class SupabasePricingRepository:
         )
         return self._parse_single_id(response, "pricing observation")
 
-    def _get_or_create_manual_source(
+    def create_ai_estimate(
         self,
         *,
         owner_id: UUID,
         access_token: str,
+        card_id: UUID,
+        price_amount: Decimal,
+        currency: str,
+        condition: str,
+        model: str,
+        prompt_version: str,
+    ) -> UUID:
+        source_id = self._get_or_create_source(
+            owner_id=owner_id,
+            access_token=access_token,
+            source_type="ai",
+            source_name=AI_LISTING_SOURCE,
+        )
+        response = self._request(
+            "POST",
+            "/rest/v1/pricing_observations",
+            access_token=access_token,
+            headers={"Prefer": "return=representation"},
+            params={"select": "id"},
+            json={
+                "owner_id": str(owner_id),
+                "card_id": str(card_id),
+                "pricing_source_id": str(source_id),
+                "price_kind": "estimate",
+                "observed_price": float(price_amount),
+                "currency": currency,
+                "condition": condition,
+                "observed_at": datetime.now(UTC).isoformat(),
+                "generation_provider": "openai",
+                "generation_model": model,
+                "prompt_version": prompt_version,
+            },
+        )
+        return self._parse_single_id(response, "pricing observation")
+
+    def _get_or_create_source(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        source_type: str,
+        source_name: str,
     ) -> UUID:
         response = self._request(
             "GET",
@@ -87,8 +132,8 @@ class SupabasePricingRepository:
             params={
                 "select": "id",
                 "owner_id": f"eq.{owner_id}",
-                "source_type": "eq.manual",
-                "source_name": f"eq.{MANUAL_LISTING_SOURCE}",
+                "source_type": f"eq.{source_type}",
+                "source_name": f"eq.{source_name}",
                 "limit": "1",
             },
         )
@@ -104,8 +149,8 @@ class SupabasePricingRepository:
             params={"select": "id"},
             json={
                 "owner_id": str(owner_id),
-                "source_type": "manual",
-                "source_name": MANUAL_LISTING_SOURCE,
+                "source_type": source_type,
+                "source_name": source_name,
             },
         )
         return self._parse_single_id(response, "pricing source")
