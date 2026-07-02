@@ -5,7 +5,7 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from card_models import CardCreate, CardResponse
+from card_models import CardCreate, CardResponse, CardUpdate
 
 CARD_COLUMNS = ",".join(
     (
@@ -29,6 +29,10 @@ class CardsRepositoryConfigurationError(RuntimeError):
 
 class CardsRepositoryError(RuntimeError):
     """Raised when Supabase cannot complete or validate a cards operation."""
+
+
+class CardNotFoundError(CardsRepositoryError):
+    """Raised when the requested card is missing or not owned by the caller."""
 
 
 class SupabaseCardsRepository:
@@ -121,6 +125,34 @@ class SupabaseCardsRepository:
 
         if not isinstance(body, list) or len(body) != 1:
             raise CardsRepositoryError("Supabase did not delete exactly one card")
+
+    def update_card(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+        card_update: CardUpdate,
+    ) -> CardResponse:
+        response = self._request(
+            "PATCH",
+            "/rest/v1/cards",
+            access_token=access_token,
+            headers={"Prefer": "return=representation"},
+            params={
+                "id": f"eq.{card_id}",
+                "owner_id": f"eq.{owner_id}",
+                "select": CARD_COLUMNS,
+            },
+            json=card_update.to_database_payload(),
+        )
+        rows = self._parse_rows(response)
+        if not rows:
+            raise CardNotFoundError("Card not found")
+        if len(rows) != 1:
+            raise CardsRepositoryError("Supabase did not return exactly one updated card")
+
+        return rows[0]
 
     def _request(
         self,

@@ -24,9 +24,31 @@ type AnalysisResult = {
 type InventoryCard = AnalysisResult & {
   id: string;
   created_at: string;
+  price_amount: number | string | null;
+  currency: string;
+  status: "draft" | "active" | "listed" | "sold" | "archived";
   image_id: string | null;
   image_url: string | null;
 };
+
+type EditCardForm = {
+  card_name: string;
+  set: string;
+  card_number: string;
+  rarity: string;
+  condition_guess: string;
+  price_amount: string;
+  currency: string;
+  status: InventoryCard["status"];
+};
+
+const CARD_STATUSES: InventoryCard["status"][] = [
+  "draft",
+  "active",
+  "listed",
+  "sold",
+  "archived",
+];
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
   try {
@@ -66,6 +88,11 @@ export default function Home() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditCardForm | null>(null);
+  const [editSavingId, setEditSavingId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccessId, setEditSuccessId] = useState<string | null>(null);
   const savingRef = useRef(false);
 
   async function fetchInventory() {
@@ -209,6 +236,103 @@ export default function Home() {
     }
   }
 
+  function startEditing(card: InventoryCard) {
+    setEditingCardId(card.id);
+    setEditError(null);
+    setEditSuccessId(null);
+    setEditForm({
+      card_name: card.card_name,
+      set: card.set,
+      card_number: card.card_number,
+      rarity: card.rarity,
+      condition_guess: card.condition_guess,
+      price_amount: String(card.price_amount ?? ""),
+      currency: card.currency,
+      status: card.status,
+    });
+  }
+
+  function cancelEditing() {
+    setEditingCardId(null);
+    setEditForm(null);
+    setEditError(null);
+  }
+
+  function updateEditField<FieldName extends keyof EditCardForm>(
+    field: FieldName,
+    value: EditCardForm[FieldName],
+  ) {
+    setEditForm((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  async function saveEdit(cardId: string) {
+    if (!editForm || editSavingId) {
+      return;
+    }
+
+    if (
+      !editForm.card_name.trim() ||
+      !editForm.set.trim() ||
+      !editForm.card_number.trim() ||
+      !editForm.rarity.trim() ||
+      !editForm.condition_guess.trim()
+    ) {
+      setEditError("Complete all editable fields before saving.");
+      return;
+    }
+
+    if (
+      editForm.price_amount.trim() !== "" &&
+      Number.isNaN(Number(editForm.price_amount))
+    ) {
+      setEditError("Price must be blank or a valid number.");
+      return;
+    }
+
+    setEditSavingId(cardId);
+    setEditError(null);
+    setEditSuccessId(null);
+
+    try {
+      const response = await authenticatedApiFetch(`/cards/${cardId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          card_name: editForm.card_name,
+          set: editForm.set,
+          card_number: editForm.card_number,
+          rarity: editForm.rarity,
+          condition_guess: editForm.condition_guess,
+          price_amount:
+            editForm.price_amount.trim() === ""
+              ? null
+              : Number(editForm.price_amount),
+          currency: editForm.currency,
+          status: editForm.status,
+        }),
+      });
+
+      if (!response.ok) {
+        throw await apiError(response, "Unable to update card");
+      }
+
+      const updatedCard: InventoryCard = await response.json();
+      setInventory((current) =>
+        current.map((card) => (card.id === updatedCard.id ? updatedCard : card)),
+      );
+      setEditSuccessId(updatedCard.id);
+      setEditingCardId(null);
+      setEditForm(null);
+    } catch (error) {
+      console.error("Inventory update error:", error);
+      setEditError(errorMessage(error, "Unable to update card."));
+    } finally {
+      setEditSavingId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6">
       <div className="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl">
@@ -235,6 +359,8 @@ export default function Home() {
           />
 
           {selectedImage ? (
+            // Local object URLs are generated from the selected file before upload.
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={selectedImage}
               alt="Selected card"
@@ -350,13 +476,159 @@ export default function Home() {
                         <p className="text-green-400 mt-2">
                           {card.suggested_price}
                         </p>
+                        <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">
+                          {card.status}
+                        </p>
                       </div>
                     </div>
 
-                    <div className="text-right text-sm text-zinc-500">
-                      #{card.card_number}
+                    <div className="text-right">
+                      <div className="text-sm text-zinc-500">#{card.card_number}</div>
+                      <button
+                        type="button"
+                        onClick={() => startEditing(card)}
+                        disabled={editSavingId === card.id}
+                        className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-green-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Edit
+                      </button>
                     </div>
                   </div>
+
+                  {editingCardId === card.id && editForm && (
+                    <div className="mt-4 border-t border-zinc-800 pt-4">
+                      <p className="mb-3 text-sm text-zinc-400">
+                        Update the saved inventory details.
+                      </p>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Card Name</span>
+                          <input
+                            value={editForm.card_name}
+                            onChange={(event) =>
+                              updateEditField("card_name", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Set</span>
+                          <input
+                            value={editForm.set}
+                            onChange={(event) =>
+                              updateEditField("set", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Card Number</span>
+                          <input
+                            value={editForm.card_number}
+                            onChange={(event) =>
+                              updateEditField("card_number", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Rarity</span>
+                          <input
+                            value={editForm.rarity}
+                            onChange={(event) =>
+                              updateEditField("rarity", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Condition</span>
+                          <input
+                            value={editForm.condition_guess}
+                            onChange={(event) =>
+                              updateEditField("condition_guess", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Price</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={editForm.price_amount}
+                            onChange={(event) =>
+                              updateEditField("price_amount", event.target.value)
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Currency</span>
+                          <input
+                            value={editForm.currency}
+                            maxLength={3}
+                            onChange={(event) =>
+                              updateEditField("currency", event.target.value.toUpperCase())
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Status</span>
+                          <select
+                            value={editForm.status}
+                            onChange={(event) =>
+                              updateEditField(
+                                "status",
+                                event.target.value as InventoryCard["status"],
+                              )
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          >
+                            {CARD_STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="mt-4 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => saveEdit(card.id)}
+                          disabled={editSavingId === card.id}
+                          className="rounded-lg bg-green-500 px-4 py-2 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
+                        >
+                          {editSavingId === card.id ? "Saving…" : "Save Changes"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          disabled={editSavingId === card.id}
+                          className="rounded-lg border border-zinc-700 px-4 py-2 text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
+                      {editError && (
+                        <p role="alert" className="mt-3 text-sm text-red-400">
+                          {editError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {editSuccessId === card.id && editingCardId !== card.id && (
+                    <p className="mt-3 text-sm text-green-400">
+                      Inventory card updated.
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

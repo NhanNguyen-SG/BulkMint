@@ -1,11 +1,13 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 
 from auth import AuthenticatedUser, get_current_user
-from card_models import CardCreate, CardResponse
+from card_models import CardCreate, CardResponse, CardUpdate
 from cards_repository import (
+    CardNotFoundError,
     CardsRepositoryConfigurationError,
     CardsRepositoryError,
     get_cards_repository,
@@ -23,6 +25,12 @@ router = APIRouter(prefix="/cards", tags=["cards"])
 
 
 def repository_error(error: Exception) -> HTTPException:
+    if isinstance(error, CardNotFoundError):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Card not found",
+        )
+
     if isinstance(
         error,
         (CardsRepositoryConfigurationError, ImageStorageConfigurationError),
@@ -38,28 +46,16 @@ def repository_error(error: Exception) -> HTTPException:
     )
 
 
-@router.get("", response_model=list[CardResponse])
-def list_cards(
-    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+def attach_card_images(
+    *,
+    cards: list[CardResponse],
+    user: AuthenticatedUser,
 ) -> list[CardResponse]:
-    try:
-        cards = get_cards_repository().list_cards(
-            owner_id=user.user_id,
-            access_token=user.access_token,
-        )
-        images = get_image_storage().attach_signed_urls(
-            cards=cards,
-            owner_id=user.user_id,
-            access_token=user.access_token,
-        )
-    except (
-        CardsRepositoryConfigurationError,
-        CardsRepositoryError,
-        ImageStorageConfigurationError,
-        ImageStorageError,
-    ) as error:
-        raise repository_error(error) from error
-
+    images = get_image_storage().attach_signed_urls(
+        cards=cards,
+        owner_id=user.user_id,
+        access_token=user.access_token,
+    )
     return [
         card.model_copy(
             update={
@@ -71,6 +67,28 @@ def list_cards(
         else card
         for card in cards
     ]
+
+
+@router.get("", response_model=list[CardResponse])
+def list_cards(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> list[CardResponse]:
+    try:
+        cards = get_cards_repository().list_cards(
+            owner_id=user.user_id,
+            access_token=user.access_token,
+        )
+        cards = attach_card_images(cards=cards, user=user)
+    except (
+        CardNotFoundError,
+        CardsRepositoryConfigurationError,
+        CardsRepositoryError,
+        ImageStorageConfigurationError,
+        ImageStorageError,
+    ) as error:
+        raise repository_error(error) from error
+
+    return cards
 
 
 @router.post("", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
@@ -147,3 +165,27 @@ async def create_card(
             "image_url": image_url,
         }
     )
+
+
+@router.patch("/{card_id}", response_model=CardResponse)
+def update_card(
+    card_id: UUID,
+    card_update: CardUpdate,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CardResponse:
+    try:
+        updated_card = get_cards_repository().update_card(
+            owner_id=user.user_id,
+            access_token=user.access_token,
+            card_id=card_id,
+            card_update=card_update,
+        )
+        return attach_card_images(cards=[updated_card], user=user)[0]
+    except (
+        CardNotFoundError,
+        CardsRepositoryConfigurationError,
+        CardsRepositoryError,
+        ImageStorageConfigurationError,
+        ImageStorageError,
+    ) as error:
+        raise repository_error(error) from error

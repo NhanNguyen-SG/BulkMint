@@ -10,7 +10,8 @@ from PIL import Image
 
 import cards_api
 from auth import AuthenticatedUser, get_current_user
-from card_models import CardCreate, CardResponse
+from card_models import CardCreate, CardResponse, CardUpdate
+from cards_repository import CardNotFoundError
 from image_storage import ImageStoragePersistenceError, StoredCardImage
 from image_validation import ValidatedImage
 from main import app
@@ -40,6 +41,11 @@ class FakeCardsRepository:
         self.create_access_token: str | None = None
         self.created_card: CardCreate | None = None
         self.deleted_card_id: UUID | None = None
+        self.update_owner_id: UUID | None = None
+        self.update_access_token: str | None = None
+        self.updated_card_id: UUID | None = None
+        self.updated_card: CardUpdate | None = None
+        self.raise_on_update: Exception | None = None
 
     def list_cards(self, *, owner_id: UUID, access_token: str) -> list[CardResponse]:
         self.list_owner_id = owner_id
@@ -68,6 +74,41 @@ class FakeCardsRepository:
         assert owner_id == USER_ID
         assert access_token == ACCESS_TOKEN
         self.deleted_card_id = card_id
+
+    def update_card(
+        self,
+        *,
+        owner_id: UUID,
+        access_token: str,
+        card_id: UUID,
+        card_update: CardUpdate,
+    ) -> CardResponse:
+        if self.raise_on_update is not None:
+            raise self.raise_on_update
+
+        self.update_owner_id = owner_id
+        self.update_access_token = access_token
+        self.updated_card_id = card_id
+        self.updated_card = card_update
+
+        return self.cards[0].model_copy(
+            update={
+                "card_name": card_update.card_name or self.cards[0].card_name,
+                "set": card_update.set or self.cards[0].set,
+                "card_number": card_update.card_number or self.cards[0].card_number,
+                "rarity": card_update.rarity or self.cards[0].rarity,
+                "condition_guess": card_update.condition_guess
+                or self.cards[0].condition_guess,
+                "price_amount": card_update.price_amount
+                if "price_amount" in card_update.model_fields_set
+                else self.cards[0].price_amount,
+                "currency": card_update.currency or self.cards[0].currency,
+                "status": card_update.status or self.cards[0].status,
+                "suggested_price": "$12.50"
+                if card_update.price_amount is not None
+                else self.cards[0].suggested_price,
+            }
+        )
 
 
 class FakeImageStorage:
@@ -149,11 +190,13 @@ def authenticated_client(authenticated_user: AuthenticatedUser) -> Iterator[Test
     app.dependency_overrides.clear()
 
 
-@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
 def test_cards_reject_unauthenticated_requests(method: str) -> None:
     with TestClient(app) as client:
         if method == "POST":
             response = client.post("/cards", data={"card": json.dumps(CARD_PAYLOAD)})
+        elif method == "PATCH":
+            response = client.patch(f"/cards/{CARD_ID}", json={"card_name": "Updated"})
         else:
             response = client.get("/cards")
 
@@ -242,3 +285,80 @@ def test_create_card_deletes_card_after_clean_image_failure(
 
     assert response.status_code == 502
     assert repository.deleted_card_id == CARD_ID
+
+
+def test_update_card_uses_authenticated_owner(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.patch(
+        f"/cards/{CARD_ID}",
+        json={
+            "card_name": "Updated Luffy",
+            "set": "Paramount War",
+            "card_number": "OP02-001",
+            "rarity": "Super Rare",
+            "condition_guess": "Lightly Played",
+            "price_amount": "12.50",
+            "currency": "usd",
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["card_name"] == "Updated Luffy"
+    assert response.json()["price_amount"] == "12.50"
+    assert response.json()["currency"] == "USD"
+    assert response.json()["status"] == "active"
+    assert response.json()["image_url"] == "http://example.test/signed-image"
+    assert repository.update_owner_id == USER_ID
+    assert repository.update_access_token == ACCESS_TOKEN
+    assert repository.updated_card_id == CARD_ID
+
+
+def test_update_card_rejects_cross_user_access(
+    authenticated_client: TestClient,
+    card_response: CardResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeCardsRepository([card_response])
+    repository.raise_on_update = CardNotFoundError("Card not found")
+    image_storage = FakeImageStorage()
+    monkeypatch.setattr(cards_api, "get_cards_repository", lambda: repository)
+    monkeypatch.setattr(cards_api, "get_image_storage", lambda: image_storage)
+
+    response = authenticated_client.patch(
+        f"/cards/{CARD_ID}",
+        json={"card_name": "Attempted cross-user update"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Card not found"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"id": str(CARD_ID)},
+        {"owner_id": str(USER_ID)},
+        {"created_at": "2026-07-01T00:00:00Z"},
+        {"image_id": str(IMAGE_ID)},
+        {"storage_path": f"{USER_ID}/{CARD_ID}/{IMAGE_ID}.png"},
+        {"status": "invalid"},
+        {"currency": "US"},
+        {"price_amount": "-1.00"},
+    ],
+)
+def test_update_card_rejects_invalid_or_immutable_fields(
+    authenticated_client: TestClient,
+    payload: dict[str, str],
+) -> None:
+    response = authenticated_client.patch(f"/cards/{CARD_ID}", json=payload)
+
+    assert response.status_code == 422
