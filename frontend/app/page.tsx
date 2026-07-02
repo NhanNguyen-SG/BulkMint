@@ -487,7 +487,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6">
-      <div className="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl">
+      <div className="w-full max-w-5xl bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl md:p-8">
         <div className="mb-6 flex justify-end">
           <AuthStatus />
         </div>
@@ -698,8 +698,8 @@ export default function Home() {
                   key={card.id}
                   className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
                 >
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-start gap-3">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
                       {card.image_url && (
                         // Signed URLs are short-lived and generated at runtime.
                         // eslint-disable-next-line @next/next/no-img-element
@@ -709,9 +709,13 @@ export default function Home() {
                           className="h-20 w-16 rounded-md border border-zinc-700 object-cover"
                         />
                       )}
-                      <div>
-                        <p className="font-semibold text-lg">{card.card_name}</p>
-                        <p className="text-zinc-400">{card.set} • {card.rarity}</p>
+                      <div className="min-w-0">
+                        <p className="break-words font-semibold text-lg">
+                          {card.card_name}
+                        </p>
+                        <p className="break-words text-zinc-400">
+                          {card.set} • {card.rarity}
+                        </p>
                         <p className="text-green-400 mt-2">
                           {card.suggested_price}
                         </p>
@@ -721,7 +725,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="flex-shrink-0 sm:text-right">
                       <div className="text-sm text-zinc-500">#{card.card_number}</div>
                       <button
                         type="button"
@@ -773,6 +777,11 @@ export default function Home() {
                     <ListingDraftPanel
                       cardId={card.id}
                       cardName={card.card_name}
+                      cardImageUrl={card.image_url}
+                      cardSet={card.set}
+                      cardNumber={card.card_number}
+                      cardRarity={card.rarity}
+                      cardCondition={card.condition_guess}
                       onClose={() => setDraftCardId(null)}
                     />
                   )}
