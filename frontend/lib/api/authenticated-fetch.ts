@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 
 const DEFAULT_API_URL = "http://localhost:8000";
+const REFRESH_TOKEN_NOT_FOUND = "refresh_token_not_found";
 
 export class AuthenticationRequiredError extends Error {
   constructor() {
@@ -16,6 +17,15 @@ function apiUrl(path: string): string {
   return new URL(path.replace(/^\/+/, ""), normalizedBaseUrl).toString();
 }
 
+function isStaleRefreshTokenError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === REFRESH_TOKEN_NOT_FOUND
+  );
+}
+
 export async function authenticatedApiFetch(
   path: string,
   init: RequestInit = {},
@@ -27,6 +37,13 @@ export async function authenticatedApiFetch(
   } = await supabase.auth.getSession();
 
   if (error) {
+    if (isStaleRefreshTokenError(error)) {
+      // Supabase normally removes an expired session after a rejected refresh.
+      // Local sign-out also clears any remaining browser cookie chunks.
+      await supabase.auth.signOut({ scope: "local" });
+      throw new AuthenticationRequiredError();
+    }
+
     throw new Error(`Unable to read Supabase session: ${error.message}`);
   }
 

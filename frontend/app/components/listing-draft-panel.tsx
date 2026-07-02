@@ -69,6 +69,12 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function reportUnexpectedError(message: string, error: unknown) {
+  if (!(error instanceof AuthenticationRequiredError)) {
+    console.error(message, error);
+  }
+}
+
 function formFromDraft(draft: ListingDraft): DraftForm {
   return {
     title: draft.title,
@@ -161,7 +167,7 @@ export function ListingDraftPanel({
       await loadDrafts(createdDraft.id);
       setSuccess(`Draft v${createdDraft.version} created.`);
     } catch (caughtError) {
-      console.error("Listing draft generation error:", caughtError);
+      reportUnexpectedError("Listing draft generation error:", caughtError);
       setError(errorMessage(caughtError, "Unable to generate listing draft."));
     } finally {
       setGenerating(false);
@@ -188,7 +194,7 @@ export function ListingDraftPanel({
     try {
       await loadDrafts(selectedDraft?.id);
     } catch (caughtError) {
-      console.error("Listing draft refresh error:", caughtError);
+      reportUnexpectedError("Listing draft refresh error:", caughtError);
       setError(errorMessage(caughtError, "Unable to refresh listing drafts."));
     }
   }
@@ -281,7 +287,7 @@ export function ListingDraftPanel({
       selectDraft(updatedDraft);
       setSuccess(`Draft saved as v${updatedDraft.version}.`);
     } catch (caughtError) {
-      console.error("Listing draft save error:", caughtError);
+      reportUnexpectedError("Listing draft save error:", caughtError);
       setError(errorMessage(caughtError, "Unable to save listing draft."));
     } finally {
       setSaving(false);

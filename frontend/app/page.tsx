@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticatedApiFetch,
@@ -90,6 +91,12 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function reportUnexpectedError(message: string, error: unknown) {
+  if (!(error instanceof AuthenticationRequiredError)) {
+    console.error(message, error);
+  }
+}
+
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -103,6 +110,7 @@ export default function Home() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [inventoryAuthRequired, setInventoryAuthRequired] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditCardForm | null>(null);
   const [editSavingId, setEditSavingId] = useState<string | null>(null);
@@ -126,6 +134,7 @@ export default function Home() {
   const fetchInventory = useCallback(async (filters: InventoryFilters) => {
     setInventoryLoading(true);
     setInventoryError(null);
+    setInventoryAuthRequired(false);
 
     try {
       const query = new URLSearchParams({ limit: "50" });
@@ -142,6 +151,12 @@ export default function Home() {
       const cards: InventoryCard[] = await response.json();
       setInventory(cards);
     } catch (error) {
+      if (error instanceof AuthenticationRequiredError) {
+        setInventory([]);
+        setInventoryAuthRequired(true);
+        return;
+      }
+
       console.error("Fetch inventory error:", error);
       setInventoryError(errorMessage(error, "Unable to load inventory."));
     } finally {
@@ -240,7 +255,7 @@ export default function Home() {
       const data: AnalysisResult = await response.json();
       setResult(data);
     } catch (error) {
-      console.error("Card analysis error:", error);
+      reportUnexpectedError("Card analysis error:", error);
       setAnalysisError(errorMessage(error, "Unable to analyze card."));
     } finally {
       setAnalyzing(false);
@@ -281,7 +296,7 @@ export default function Home() {
       });
       setSaved(true);
     } catch (error) {
-      console.error("Inventory save error:", error);
+      reportUnexpectedError("Inventory save error:", error);
       setSaveError(errorMessage(error, "Unable to save card."));
     } finally {
       savingRef.current = false;
@@ -381,7 +396,7 @@ export default function Home() {
       setEditingCardId(null);
       setEditForm(null);
     } catch (error) {
-      console.error("Inventory update error:", error);
+      reportUnexpectedError("Inventory update error:", error);
       setEditError(errorMessage(error, "Unable to update card."));
     } finally {
       setEditSavingId(null);
@@ -423,7 +438,7 @@ export default function Home() {
         return current.filter((card) => card.id !== archivedCard.id);
       });
     } catch (error) {
-      console.error("Inventory archive error:", error);
+      reportUnexpectedError("Inventory archive error:", error);
       setRemovalError(errorMessage(error, "Unable to archive card."));
       setRemovalErrorCardId(cardId);
     } finally {
@@ -461,7 +476,7 @@ export default function Home() {
       setInventory((current) => current.filter((card) => card.id !== cardId));
       if (draftCardId === cardId) setDraftCardId(null);
     } catch (error) {
-      console.error("Inventory delete error:", error);
+      reportUnexpectedError("Inventory delete error:", error);
       setRemovalError(errorMessage(error, "Unable to delete card."));
       setRemovalErrorCardId(cardId);
     } finally {
@@ -656,13 +671,25 @@ export default function Home() {
               {inventoryError}
             </p>
           )}
-          {!inventoryLoading && !inventoryError && inventory.length === 0 && (
+          {inventoryAuthRequired && (
+            <p className="text-sm text-zinc-400">
+              Please{" "}
+              <Link href="/login" className="text-green-400 hover:text-green-300">
+                log in
+              </Link>{" "}
+              to view your inventory.
+            </p>
+          )}
+          {!inventoryLoading &&
+            !inventoryError &&
+            !inventoryAuthRequired &&
+            inventory.length === 0 && (
             <p className="text-sm text-zinc-500">
               {Object.values(appliedFilters).some(Boolean)
                 ? "No cards match these filters."
                 : "No saved cards yet."}
             </p>
-          )}
+            )}
 
           {inventory.length > 0 && (
             <div className="space-y-4">
