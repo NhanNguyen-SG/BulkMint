@@ -11,11 +11,13 @@ from openai import OpenAI
 from auth import AuthenticatedUser, get_current_user
 from cards_api import router as cards_router
 from image_validation import read_validated_image
+from listing_api import router as listing_router
 
 load_dotenv()
 
 app = FastAPI()
 app.include_router(cards_router)
+app.include_router(listing_router)
 
 app.add_middleware(
     CORSMiddleware,
