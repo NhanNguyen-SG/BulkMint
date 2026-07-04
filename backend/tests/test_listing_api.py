@@ -301,7 +301,7 @@ def test_listing_endpoints_reject_anonymous(
     assert response.status_code == 401
 
 
-def test_create_ai_draft_with_image_price_and_audit(
+def test_create_ai_draft_discards_unverified_price_and_creates_audit(
     authenticated_client: TestClient,
     draft_response: ListingDraftResponse,
     monkeypatch: pytest.MonkeyPatch,
@@ -331,11 +331,12 @@ def test_create_ai_draft_with_image_price_and_audit(
     assert response.json()["version"] == 1
     assert response.json()["ai_model"] == "gpt-4.1-mini"
     assert response.json()["prompt_version"] == LISTING_PROMPT_VERSION
+    assert response.json()["price_amount"] is None
     assert repository.card_checked == CARD_ID
-    assert repository.created_observation_id == OBSERVATION_ID
-    assert pricing.calls[0]["price_amount"] == Decimal("12.34")
-    assert pricing.calls[0]["model"] == "gpt-4.1-mini"
-    assert pricing.calls[0]["prompt_version"] == LISTING_PROMPT_VERSION
+    assert repository.created_input is not None
+    assert repository.created_input.price_amount is None
+    assert repository.created_observation_id is None
+    assert pricing.calls == []
     assert generation.calls[0]["image"] == images.image
     assert audit.events[0]["action"] == "listing_draft.created"
     assert audit.events[0]["draft_id"] == DRAFT_ID

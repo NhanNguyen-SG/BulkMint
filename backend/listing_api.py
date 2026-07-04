@@ -102,28 +102,19 @@ def create_listing_draft(
             card=card,
             image=image,
         )
-
-        selected_observation_id = None
-        if draft.price_amount is not None:
-            selected_observation_id = (
-                get_pricing_repository().create_ai_estimate(
-                    owner_id=user.user_id,
-                    access_token=user.access_token,
-                    card_id=card_id,
-                    price_amount=draft.price_amount,
-                    currency=draft.currency,
-                    condition=draft.condition_summary,
-                    model=draft.generation_model,
-                    prompt_version=draft.prompt_version,
-                )
-            )
+        # Listing generation has no verified market observations yet. Enforce the
+        # no-price contract at the API boundary even if a generation implementation
+        # returns an unverified estimate.
+        draft = draft.model_copy(
+            update={"price_amount": None, "currency": card.currency}
+        )
 
         created_draft = repository.create_draft(
             owner_id=user.user_id,
             access_token=user.access_token,
             card_id=card_id,
             draft=draft,
-            selected_pricing_observation_id=selected_observation_id,
+            selected_pricing_observation_id=None,
         )
         audit_repository.create_listing_event(
             owner_id=user.user_id,

@@ -169,29 +169,6 @@ function draftKeywords(raw: Record<string, unknown>): string[] {
   );
 }
 
-function formatPrice(
-  amount: ListingDraft["price_amount"],
-  currency: string,
-): string {
-  if (amount === null || amount === "") return "Not suggested";
-
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount)) return "Not suggested";
-
-  const normalizedCurrency = currency.trim().toUpperCase() || "USD";
-  try {
-    const formatted = new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: normalizedCurrency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(numericAmount);
-    return `${formatted} ${normalizedCurrency}`;
-  } catch {
-    return `${numericAmount.toFixed(2)} ${normalizedCurrency}`;
-  }
-}
-
 function CopyIcon() {
   return (
     <svg
@@ -740,11 +717,8 @@ export function ListingDraftPanel({
                   <dt className="text-xs font-medium uppercase tracking-wide text-zinc-400">
                     Suggested Price
                   </dt>
-                  <dd className="mt-1 text-base font-semibold text-green-300">
-                    {formatPrice(
-                      selectedDraft.price_amount,
-                      selectedDraft.currency,
-                    )}
+                  <dd className="mt-1 text-base font-semibold text-amber-300">
+                    Price not verified
                   </dd>
                 </div>
                 <div className="rounded-lg bg-zinc-950/70 p-3">
@@ -756,6 +730,14 @@ export function ListingDraftPanel({
                   </dd>
                 </div>
               </dl>
+
+              <p
+                role="note"
+                className="mt-3 rounded-lg border border-amber-700/70 bg-amber-950/30 px-3 py-2 text-sm text-amber-200"
+              >
+                AI price is not market-verified. Check recent sold listings
+                before listing.
+              </p>
 
               <section className="mt-6">
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">

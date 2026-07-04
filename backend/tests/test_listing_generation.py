@@ -84,7 +84,8 @@ def test_generate_uses_structured_output_card_data_and_image(
     assert draft.title == generated_output.title
     assert draft.condition_summary == generated_output.condition_summary
     assert draft.item_specifics_json["keywords"] == generated_output.keywords
-    assert draft.price_amount == Decimal("12.34")
+    assert draft.price_amount is None
+    assert draft.currency == "USD"
     assert draft.generation_model == "gpt-4.1-mini"
     assert draft.prompt_version == LISTING_PROMPT_VERSION
 
@@ -95,8 +96,23 @@ def test_generate_uses_structured_output_card_data_and_image(
     input_items = request["input"][0]["content"]
     assert input_items[0]["type"] == "input_text"
     assert "Monkey D. Luffy" in input_items[0]["text"]
+    assert '"verified_market_data": null' in input_items[0]["text"]
+    assert "saved_price_amount" not in input_items[0]["text"]
     assert input_items[1]["type"] == "input_image"
     assert input_items[1]["image_url"].startswith("data:image/png;base64,")
+
+
+def test_generated_price_fields_are_optional(
+    generated_output: GeneratedListingDraft,
+) -> None:
+    payload = generated_output.model_dump()
+    payload.pop("price_suggestion")
+    payload.pop("currency")
+
+    generated = GeneratedListingDraft.model_validate(payload)
+
+    assert generated.price_suggestion is None
+    assert generated.currency is None
 
 
 def test_generate_without_image_uses_saved_card_data_only(

@@ -2,7 +2,6 @@ import base64
 import json
 import os
 from datetime import UTC, datetime
-from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Any, Protocol, cast
 
@@ -14,7 +13,7 @@ from image_storage import CardImageForGeneration
 from listing_models import ListingDraftCreate
 from listing_repository import ListingCardContext
 
-LISTING_PROMPT_VERSION = "listing-draft-v1"
+LISTING_PROMPT_VERSION = "listing-draft-v2"
 DEFAULT_LISTING_MODEL = "gpt-4.1-mini"
 
 LISTING_GENERATION_PROMPT = """
@@ -32,9 +31,12 @@ Requirements:
 - Suggest a broad review-only category, not a marketplace category ID.
 - Return item specifics only when supported by the inputs.
 - Return useful search keywords without repetition or keyword stuffing.
-- A price suggestion may use the saved price as a reference. Do not claim live,
-  sold-comparable, or marketplace pricing research. Return null price and currency
-  when the available information is insufficient.
+- Never estimate, infer, or invent a price from card identity, rarity, condition,
+  saved inventory values, or general model knowledge.
+- Return a price only when the application explicitly supplies
+  `verified_market_data` with supporting market observations.
+- When `verified_market_data` is null or absent, `price_suggestion` and `currency`
+  must both be null.
 - Never include credentials, URLs, markdown, HTML, or publication instructions.
 """.strip()
 
@@ -85,8 +87,8 @@ class GeneratedListingDraft(BaseModel):
     category_suggestion: GeneratedCategory
     item_specifics: list[GeneratedItemSpecific] = Field(max_length=20)
     keywords: list[GeneratedKeyword] = Field(min_length=1, max_length=15)
-    price_suggestion: GeneratedPrice | None
-    currency: CurrencyCode | None
+    price_suggestion: GeneratedPrice | None = None
+    currency: CurrencyCode | None = None
 
     @model_validator(mode="after")
     def validate_generated_listing(self) -> "GeneratedListingDraft":
@@ -121,12 +123,10 @@ class GeneratedListingDraft(BaseModel):
             condition_summary=self.condition_summary,
             item_specifics_json=item_specifics,
             category_suggestion=self.category_suggestion,
-            price_amount=(
-                Decimal(str(self.price_suggestion))
-                if self.price_suggestion is not None
-                else None
-            ),
-            currency=self.currency or fallback_currency,
+            # The generation input currently contains no verified market evidence.
+            # Model-supplied prices are therefore deliberately discarded.
+            price_amount=None,
+            currency=fallback_currency,
             generation_model=model,
             prompt_version=LISTING_PROMPT_VERSION,
             generated_at=datetime.now(UTC),
@@ -186,10 +186,8 @@ class ListingGenerationService:
             "card_number": card.card_number,
             "rarity": card.rarity,
             "condition_guess": card.condition_guess,
-            "saved_price_amount": (
-                str(card.price_amount) if card.price_amount is not None else None
-            ),
-            "saved_price_currency": card.currency,
+            "verified_market_data": None,
+            "display_currency": card.currency,
         }
         content: list[dict[str, Any]] = [
             {
