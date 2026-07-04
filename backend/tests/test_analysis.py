@@ -1,3 +1,4 @@
+import base64
 import json
 from collections.abc import Iterator
 from io import BytesIO
@@ -40,9 +41,9 @@ def authenticated_client() -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
-def png_image() -> bytes:
+def image_bytes(image_format: str) -> bytes:
     buffer = BytesIO()
-    Image.new("RGB", (2, 2), color="white").save(buffer, format="PNG")
+    Image.new("RGB", (2, 2), color="white").save(buffer, format=image_format)
     return buffer.getvalue()
 
 
@@ -58,7 +59,7 @@ def test_analyze_card_rejects_missing_authentication() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/analyze-card",
-            files={"file": ("card.png", png_image(), "image/png")},
+            files={"file": ("card.png", image_bytes("PNG"), "image/png")},
         )
 
     assert response.status_code == 401
@@ -87,16 +88,27 @@ def test_analyze_card_validates_upload(
     assert response.status_code == expected_status
 
 
-def test_analyze_card_accepts_readable_image(
+@pytest.mark.parametrize(
+    ("filename", "content_type", "image_format"),
+    [
+        ("card.jpg", "image/jpeg", "JPEG"),
+        ("card.jpeg", "image/jpeg", "JPEG"),
+        ("card.png", "image/png", "PNG"),
+        ("card.webp", "image/webp", "WEBP"),
+        ("card.heic", "image/heic", "HEIF"),
+        ("card.heif", "image/heif", "HEIF"),
+        ("card.avif", "image/avif", "AVIF"),
+    ],
+)
+def test_analyze_card_accepts_and_normalizes_supported_image(
     authenticated_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    content_type: str,
+    image_format: str,
 ) -> None:
     completion = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content=json.dumps(ANALYSIS_RESULT))
-            )
-        ]
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(ANALYSIS_RESULT)))]
     )
     create_completion = Mock(return_value=completion)
     openai_client = SimpleNamespace(
@@ -108,11 +120,21 @@ def test_analyze_card_accepts_readable_image(
 
     response = authenticated_client.post(
         "/analyze-card",
-        files={"file": ("card.png", png_image(), "image/png")},
+        files={
+            "file": (
+                filename,
+                image_bytes(image_format),
+                content_type,
+            )
+        },
     )
 
     assert response.status_code == 200
     assert response.json() == ANALYSIS_RESULT
     request = create_completion.call_args.kwargs
     image_url = request["messages"][0]["content"][1]["image_url"]["url"]
-    assert image_url.startswith("data:image/png;base64,")
+    assert image_url.startswith("data:image/jpeg;base64,")
+    normalized_bytes = base64.b64decode(image_url.partition(",")[2])
+    with Image.open(BytesIO(normalized_bytes)) as normalized:
+        assert normalized.format == "JPEG"
+        assert normalized.mode == "RGB"

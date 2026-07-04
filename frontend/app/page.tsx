@@ -9,8 +9,32 @@ import {
 import { AuthStatus } from "./components/auth-status";
 import { ListingDraftPanel } from "./components/listing-draft-panel";
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
+]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "heic",
+  "heif",
+  "avif",
+]);
+const GENERIC_IMAGE_TYPES = new Set(["", "application/octet-stream"]);
+const BROWSER_PREVIEW_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/avif",
+]);
 
 type AnalysisResult = {
   card_name: string;
@@ -197,34 +221,56 @@ export default function Home() {
     };
   }, [selectedImage]);
 
-  function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  function selectImageFile(file: File): boolean {
     setUploadError(null);
     setAnalysisError(null);
     setSaveError(null);
     setResult(null);
     setSaved(false);
 
-    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    const contentType = file.type.trim().toLowerCase();
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const hasAcceptedType = ALLOWED_IMAGE_TYPES.has(contentType);
+    const hasAcceptedFallbackExtension =
+      GENERIC_IMAGE_TYPES.has(contentType) &&
+      ALLOWED_IMAGE_EXTENSIONS.has(extension);
+
+    if (!hasAcceptedType && !hasAcceptedFallbackExtension) {
       setSelectedFile(null);
       setSelectedImage(null);
-      setUploadError("Choose a JPEG, PNG, or WebP image.");
-      event.currentTarget.value = "";
-      return;
+      setUploadError("Choose a JPEG, PNG, WebP, HEIC, HEIF, or AVIF image.");
+      return false;
     }
 
     if (file.size > MAX_IMAGE_BYTES) {
       setSelectedFile(null);
       setSelectedImage(null);
-      setUploadError("Image must be 10 MB or smaller.");
-      event.currentTarget.value = "";
-      return;
+      setUploadError("Image must be 25 MB or smaller.");
+      return false;
     }
 
     setSelectedFile(file);
-    setSelectedImage(URL.createObjectURL(file));
+    setSelectedImage(
+      BROWSER_PREVIEW_TYPES.has(contentType) ? URL.createObjectURL(file) : null,
+    );
+    return true;
+  }
+
+  function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!selectImageFile(file)) {
+      event.currentTarget.value = "";
+    }
+  }
+
+  function handleImageDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) {
+      selectImageFile(file);
+    }
   }
 
   async function analyzeCard() {
@@ -500,12 +546,14 @@ export default function Home() {
 
         <label
           htmlFor="card-upload"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleImageDrop}
           className="block border-2 border-dashed border-zinc-700 rounded-xl p-8 text-center hover:border-green-500 transition cursor-pointer"
         >
           <input
             id="card-upload"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif,.jpg,.jpeg,.png,.webp,.heic,.heif,.avif"
             onChange={handleImageUpload}
             className="hidden"
           />
@@ -518,11 +566,18 @@ export default function Home() {
               alt="Selected card"
               className="mx-auto max-h-80 rounded-xl border border-zinc-700"
             />
+          ) : selectedFile ? (
+            <>
+              <p className="text-lg font-medium">Selected: {selectedFile.name}</p>
+              <p className="text-sm text-zinc-500 mt-2">
+                A normalized JPEG preview will be created after upload.
+              </p>
+            </>
           ) : (
             <>
               <p className="text-lg font-medium">Upload Card Image</p>
               <p className="text-sm text-zinc-500 mt-2">
-                JPEG, PNG, or WebP · 10 MB maximum
+                JPEG, PNG, WebP, HEIC, HEIF, AVIF • 25 MB maximum
               </p>
             </>
           )}

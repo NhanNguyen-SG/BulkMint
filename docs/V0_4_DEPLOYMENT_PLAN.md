@@ -86,7 +86,8 @@ Ready:
 - All inventory and listing endpoints require a verified Supabase JWT.
 - Data operations use the user's access token and owner-scoped RLS.
 - OpenAI is called only from backend code.
-- Upload validation limits images to 10 MiB and JPEG, PNG, or WebP.
+- Upload validation limits originals to 25 MiB and accepts JPEG, PNG, WebP,
+  HEIC, HEIF, or AVIF.
 - Public `GET /health` returns only `{"status": "ok"}`.
 - CORS origins are parsed and validated from `CORS_ALLOWED_ORIGINS`;
   development defaults to `http://localhost:3000`.
@@ -106,11 +107,12 @@ not continuous monitoring:
 
 Present:
 
-- Four ordered migrations under `supabase/migrations/`.
+- Five ordered migrations under `supabase/migrations/`.
 - Tables for cards, card images, analysis jobs, listing drafts, pricing
   provenance, and audit events.
 - UUID ownership fields, foreign keys, checks, indexes, grants, and RLS.
-- Private `card-images` bucket with a 10 MiB limit and JPEG/PNG/WebP allowlist.
+- Private `card-images` bucket with a 25 MiB limit and
+  JPEG/PNG/WebP/HEIC/HEIF/AVIF allowlist after the new migration is applied.
 - Local RLS, storage-policy, integrity, and cleanup test scripts.
 - Local migrations and policy tests were validated before `v0.3.1`.
 
@@ -479,7 +481,7 @@ Phase 3 execution record:
   - exactly five expected public functions, eight triggers, and 18 indexes;
   - exactly three expected owner-scoped Storage object policies;
   - one private `card-images` bucket with a 10 MiB limit and JPEG, PNG, and
-    WebP MIME allowlist.
+    WebP MIME allowlist before the pending modern-image migration.
 - No Auth setting was changed.
 - Security Advisor results are pending a manual Dashboard review because the
   installed CLI does not expose the hosted Advisor report.
@@ -533,7 +535,8 @@ Executed after separate explicit approval:
    applied.
 7. Verify table grants, RLS enablement/policies, indexes, triggers, and
    constraints.
-8. Verify the private `card-images` bucket, 10 MiB limit, and MIME allowlist.
+8. Verify the private `card-images` bucket, 25 MiB limit, and six-format MIME
+   allowlist after applying the modern-image migration.
 9. Run production-safe anonymous/owner/cross-user smoke tests with dedicated
    beta test users; never use the secret key in browser tests.
 10. Review Supabase Security Advisor findings before backend deployment.
@@ -641,7 +644,8 @@ High priority before inviting users:
 
 Scalability/operational:
 
-- Image analysis base64-encodes up to 10 MiB in backend memory.
+- Image analysis accepts originals up to 25 MiB, normalizes them to JPEG at a
+  maximum 4096-pixel edge, and base64-encodes only that derivative.
 - The async analysis route calls a synchronous OpenAI client and can block an
   application worker under concurrent load.
 - OpenAI retries, timeouts, and user-facing transient-error handling need a

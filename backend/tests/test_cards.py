@@ -125,8 +125,7 @@ class FakeCardsRepository:
                 "set": card_update.set or self.cards[0].set,
                 "card_number": card_update.card_number or self.cards[0].card_number,
                 "rarity": card_update.rarity or self.cards[0].rarity,
-                "condition_guess": card_update.condition_guess
-                or self.cards[0].condition_guess,
+                "condition_guess": card_update.condition_guess or self.cards[0].condition_guess,
                 "price_amount": card_update.price_amount
                 if "price_amount" in card_update.model_fields_set
                 else self.cards[0].price_amount,
@@ -173,13 +172,14 @@ class FakeImageStorage:
             )
         assert card_id == CARD_ID
         assert access_token == ACCESS_TOKEN
-        assert image.content_type == "image/png"
+        assert image.original.content_type == "image/png"
+        assert image.normalized.content_type == "image/jpeg"
         self.persist_owner_id = owner_id
         self.persisted = True
         return StoredCardImage(
             image_id=IMAGE_ID,
             card_id=CARD_ID,
-            storage_path=f"{USER_ID}/{CARD_ID}/{IMAGE_ID}.png",
+            storage_path=f"{USER_ID}/{CARD_ID}/{IMAGE_ID}.jpg",
         )
 
     def create_signed_url(self, **kwargs: object) -> str:

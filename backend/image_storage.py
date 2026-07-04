@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from card_models import CardResponse
-from image_validation import ValidatedImage
+from image_validation import ImageObject, ValidatedImage
 
 CARD_IMAGES_BUCKET = "card-images"
 SIGNED_URL_TTL_SECONDS = 300
@@ -36,6 +36,16 @@ class StoredCardImage:
     image_id: UUID
     card_id: UUID
     storage_path: str
+    original_image_id: UUID | None = None
+    original_storage_path: str | None = None
+
+
+@dataclass(frozen=True)
+class PendingCardImage:
+    image_id: UUID
+    storage_path: str
+    image_kind: str
+    image: ImageObject
 
 
 @dataclass(frozen=True)
@@ -83,38 +93,57 @@ class SupabaseImageStorage:
         access_token: str,
         image: ValidatedImage,
     ) -> StoredCardImage:
-        image_id = uuid4()
-        storage_path = f"{owner_id}/{card_id}/{image_id}.{image.extension}"
-        metadata_created = False
-        upload_attempted = False
+        original_image_id = uuid4()
+        normalized_image_id = uuid4()
+        images = [
+            PendingCardImage(
+                image_id=original_image_id,
+                storage_path=(
+                    f"{owner_id}/{card_id}/{original_image_id}.{image.original.extension}"
+                ),
+                image_kind="other",
+                image=image.original,
+            ),
+            PendingCardImage(
+                image_id=normalized_image_id,
+                storage_path=(
+                    f"{owner_id}/{card_id}/{normalized_image_id}.{image.normalized.extension}"
+                ),
+                image_kind="front",
+                image=image.normalized,
+            ),
+        ]
+        metadata_created: set[UUID] = set()
+        upload_attempted: set[UUID] = set()
 
         try:
-            self._insert_pending_metadata(
-                owner_id=owner_id,
-                card_id=card_id,
-                image_id=image_id,
-                storage_path=storage_path,
-                access_token=access_token,
-                image=image,
-            )
-            metadata_created = True
-            upload_attempted = True
-            self._upload_object(
-                storage_path=storage_path,
-                access_token=access_token,
-                image=image,
-            )
-            self._activate_metadata(
-                image_id=image_id,
-                owner_id=owner_id,
-                access_token=access_token,
-            )
+            for pending_image in images:
+                self._insert_pending_metadata(
+                    owner_id=owner_id,
+                    card_id=card_id,
+                    pending_image=pending_image,
+                    access_token=access_token,
+                )
+                metadata_created.add(pending_image.image_id)
+
+            for pending_image in images:
+                upload_attempted.add(pending_image.image_id)
+                self._upload_object(
+                    pending_image=pending_image,
+                    access_token=access_token,
+                )
+
+            for pending_image in images:
+                self._activate_metadata(
+                    image_id=pending_image.image_id,
+                    owner_id=owner_id,
+                    access_token=access_token,
+                )
         except ImageStorageError as error:
             cleanup_complete = self._compensate_failed_persistence(
-                image_id=image_id,
                 owner_id=owner_id,
-                storage_path=storage_path,
                 access_token=access_token,
+                images=images,
                 metadata_created=metadata_created,
                 upload_attempted=upload_attempted,
             )
@@ -124,9 +153,11 @@ class SupabaseImageStorage:
             ) from error
 
         return StoredCardImage(
-            image_id=image_id,
+            image_id=normalized_image_id,
             card_id=card_id,
-            storage_path=storage_path,
+            storage_path=images[1].storage_path,
+            original_image_id=original_image_id,
+            original_storage_path=images[0].storage_path,
         )
 
     def attach_signed_urls(
@@ -149,6 +180,7 @@ class SupabaseImageStorage:
                 "owner_id": f"eq.{owner_id}",
                 "card_id": f"in.({','.join(str(card_id) for card_id in card_ids)})",
                 "status": "eq.active",
+                "image_kind": "eq.front",
                 "order": "created_at.desc",
             },
         )
@@ -341,10 +373,8 @@ class SupabaseImageStorage:
         *,
         owner_id: UUID,
         card_id: UUID,
-        image_id: UUID,
-        storage_path: str,
+        pending_image: PendingCardImage,
         access_token: str,
-        image: ValidatedImage,
     ) -> None:
         self._request(
             "POST",
@@ -352,15 +382,15 @@ class SupabaseImageStorage:
             access_token=access_token,
             headers={"Prefer": "return=minimal"},
             json={
-                "id": str(image_id),
+                "id": str(pending_image.image_id),
                 "owner_id": str(owner_id),
                 "card_id": str(card_id),
                 "storage_bucket": CARD_IMAGES_BUCKET,
-                "storage_path": storage_path,
-                "image_kind": "front",
-                "mime_type": image.content_type,
-                "byte_size": image.byte_size,
-                "sha256": image.sha256,
+                "storage_path": pending_image.storage_path,
+                "image_kind": pending_image.image_kind,
+                "mime_type": pending_image.image.content_type,
+                "byte_size": pending_image.image.byte_size,
+                "sha256": pending_image.image.sha256,
                 "status": "pending",
             },
         )
@@ -368,20 +398,19 @@ class SupabaseImageStorage:
     def _upload_object(
         self,
         *,
-        storage_path: str,
+        pending_image: PendingCardImage,
         access_token: str,
-        image: ValidatedImage,
     ) -> None:
-        encoded_path = quote(storage_path, safe="/")
+        encoded_path = quote(pending_image.storage_path, safe="/")
         self._request(
             "POST",
             f"/storage/v1/object/{CARD_IMAGES_BUCKET}/{encoded_path}",
             access_token=access_token,
             headers={
-                "Content-Type": image.content_type,
+                "Content-Type": pending_image.image.content_type,
                 "x-upsert": "false",
             },
-            content=image.content,
+            content=pending_image.image.content,
         )
 
     def _activate_metadata(
@@ -459,51 +488,50 @@ class SupabaseImageStorage:
     def _compensate_failed_persistence(
         self,
         *,
-        image_id: UUID,
         owner_id: UUID,
-        storage_path: str,
         access_token: str,
-        metadata_created: bool,
-        upload_attempted: bool,
+        images: list[PendingCardImage],
+        metadata_created: set[UUID],
+        upload_attempted: set[UUID],
     ) -> bool:
-        if not metadata_created:
-            return True
+        cleanup_complete = True
+        for pending_image in reversed(images):
+            if pending_image.image_id not in metadata_created:
+                continue
 
-        if upload_attempted:
-            try:
-                self._delete_object(
-                    storage_path=storage_path,
-                    access_token=access_token,
-                )
-            except ImageStorageError:
+            object_cleanup_complete = True
+            if pending_image.image_id in upload_attempted:
                 try:
-                    self._mark_metadata_failed(
-                        image_id=image_id,
+                    self._delete_object(
+                        storage_path=pending_image.storage_path,
+                        access_token=access_token,
+                        allow_missing=True,
+                    )
+                except ImageStorageError:
+                    object_cleanup_complete = False
+                    cleanup_complete = False
+
+            if object_cleanup_complete:
+                try:
+                    self._delete_metadata(
+                        image_id=pending_image.image_id,
                         owner_id=owner_id,
                         access_token=access_token,
                     )
+                    continue
                 except ImageStorageError:
-                    pass
-                return False
+                    cleanup_complete = False
 
-        try:
-            self._delete_metadata(
-                image_id=image_id,
-                owner_id=owner_id,
-                access_token=access_token,
-            )
-        except ImageStorageError:
             try:
                 self._mark_metadata_failed(
-                    image_id=image_id,
+                    image_id=pending_image.image_id,
                     owner_id=owner_id,
                     access_token=access_token,
                 )
             except ImageStorageError:
                 pass
-            return False
 
-        return True
+        return cleanup_complete
 
     def _request(
         self,

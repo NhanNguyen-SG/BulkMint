@@ -112,9 +112,9 @@ bucket_row="$(
         from storage.buckets
         where id = 'card-images';"
 )"
-[[ "$bucket_row" == "f|10485760|image/jpeg,image/png,image/webp" ]] ||
+[[ "$bucket_row" == "f|26214400|image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif" ]] ||
   fail "card-images bucket configuration is incorrect: $bucket_row"
-echo "PASS: card-images bucket is private with 10 MiB and expected MIME types"
+echo "PASS: card-images bucket is private with 25 MiB and expected MIME types"
 
 run_id="$(date +%s)-$$"
 email_a="storage-owner-a-$run_id@example.test"

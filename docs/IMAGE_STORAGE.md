@@ -6,6 +6,11 @@ The proposed SQL is in
 `supabase/migrations/20260701000200_card_image_storage_contract.sql`. It has
 been applied and validated against local Supabase only.
 
+The 25 MiB and modern-format extension is in
+`supabase/migrations/20260704000100_modern_image_upload_contract.sql`. Its SQL
+has been validated against local Supabase inside a rolled-back transaction; it
+has not been applied remotely.
+
 ## Design goals
 
 - Keep original card images private.
@@ -23,8 +28,8 @@ been applied and validated against local Supabase only.
 |---|---|
 | Bucket ID and name | `card-images` |
 | Access model | Private |
-| File-size limit | 10 MiB (`10485760` bytes) |
-| Allowed MIME types | `image/jpeg`, `image/png`, `image/webp` |
+| File-size limit | 25 MiB (`26214400` bytes) |
+| Allowed MIME types | JPEG, PNG, WebP, HEIC, HEIF, and AVIF |
 | Overwrite/upsert | Not allowed |
 | Normal downloads | Authenticated request or short-lived signed URL |
 
@@ -68,6 +73,13 @@ Rules:
   - JPEG becomes `jpg`
   - PNG becomes `png`
   - WebP becomes `webp`
+  - HEIC becomes `heic`
+  - HEIF becomes `heif`
+  - AVIF becomes `avif`
+- Every upload creates two objects:
+  - an untouched original with `image_kind = 'other'`; and
+  - a metadata-stripped, orientation-corrected JPEG with
+    `image_kind = 'front'`.
 - Original filenames are never used.
 - Paths are immutable. Replacing an image creates a new image ID and object.
 - Upload uses `upsert=false`.
@@ -101,9 +113,9 @@ Mapping:
 | `card_id` | Second path segment |
 | `storage_bucket` | Always `card-images` |
 | `storage_path` | Complete canonical object path |
-| `mime_type` | Verified MIME type |
-| `byte_size` | Validated original byte count |
-| `sha256` | Lowercase SHA-256 of original bytes |
+| `mime_type` | Verified MIME type for that object |
+| `byte_size` | Validated byte count for that object |
+| `sha256` | Lowercase SHA-256 for that object's bytes |
 | `image_kind` | `front`, `back`, `detail`, or `other` |
 | `status` | Object lifecycle state |
 
@@ -142,7 +154,7 @@ All policies apply only to the `authenticated` role and the private
 - Storage assigns `storage.objects.owner_id` to `auth.uid()`;
 - the first path segment equals `auth.uid()`;
 - the path has exactly the owner and card folders;
-- extension is `jpg`, `png`, or `webp`;
+- extension is `jpg`, `png`, `webp`, `heic`, `heif`, or `avif`;
 - a `pending` `card_images` row exists for the same owner, card, bucket, path,
   and filename image ID.
 
@@ -189,12 +201,16 @@ The FastAPI implementation uses this order:
 
 1. FastAPI verifies the user JWT.
 2. FastAPI revalidates MIME type, decoded image, size, and hash.
-3. FastAPI confirms the card belongs to the verified user.
-4. FastAPI generates `image_id` and the canonical path.
-5. FastAPI inserts `card_images` metadata with status `pending`.
-6. FastAPI uploads once with the user's JWT and `upsert=false`.
-7. FastAPI updates metadata from `pending` to `active`.
-8. FastAPI returns image metadata and, when needed, a short-lived signed URL.
+3. FastAPI preserves the original bytes and creates an orientation-corrected,
+   metadata-stripped JPEG no larger than 4096 pixels on either axis.
+4. FastAPI confirms the card belongs to the verified user.
+5. FastAPI generates independent image IDs and canonical paths for the original
+   and normalized objects.
+6. FastAPI inserts both `card_images` metadata rows with status `pending`.
+7. FastAPI uploads both objects with the user's JWT and `upsert=false`.
+8. FastAPI updates both metadata rows from `pending` to `active`.
+9. FastAPI returns the normalized image metadata and, when needed, a
+   short-lived signed URL.
 
 The browser never writes Storage or `card_images` directly.
 
@@ -203,7 +219,8 @@ The browser never writes Storage or `card_images` directly.
 `POST /cards` accepts multipart form data:
 
 - `card`: required JSON matching the card creation contract;
-- `image`: optional original JPEG, PNG, or WebP file.
+- `image`: optional original JPEG, PNG, WebP, HEIC, HEIF, or AVIF file, up to
+  25 MiB.
 
 FastAPI validates the image again, generates the card and image IDs, creates
 the canonical path, and runs the lifecycle above. No storage path, owner ID,
@@ -214,8 +231,9 @@ card ID, or image ID is accepted from browser input.
 - `image_id`: active front-image UUID, or null;
 - `image_url`: private signed URL valid for five minutes, or null.
 
-The frontend submits the original selected file only after review/save and
-renders the returned signed URL in inventory.
+The frontend submits the original selected file only after review/save.
+Inventory previews and later AI listing generation use the normalized JPEG;
+the original remains private and retained for future reprocessing.
 
 ## Cleanup and compensation
 
@@ -277,7 +295,7 @@ supabase db reset
 Results:
 
 - Both migrations applied successfully from a clean local reset.
-- The bucket is private with a 10 MiB limit and the three expected MIME types.
+- The bucket is private with a 25 MiB limit and the six expected MIME types.
 - Anonymous upload and read were denied.
 - Owner upload, active-object read, and delete succeeded.
 - Cross-user read and delete were denied.

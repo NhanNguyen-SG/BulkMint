@@ -8,6 +8,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "openai>=2.38.0,<3.0",
     "pillow>=11,<13",
+    "pillow-heif>=1.4,<2",
     "pydantic>=2.13.4,<3.0",
     "pyjwt[crypto]>=2.10,<3",
     "python-dotenv>=1.2.1,<2.0",
