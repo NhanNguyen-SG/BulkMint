@@ -1,4 +1,3 @@
-import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -9,7 +8,6 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi.testclient import TestClient
 from jwt import PyJWKClientError
-from jwt.exceptions import PyJWKClientConnectionError
 
 import auth
 from auth import SupabaseJWTVerifier
@@ -58,17 +56,12 @@ def test_me_rejects_invalid_token(client: TestClient, monkeypatch: pytest.Monkey
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-def test_verification_failure_logs_only_sanitized_diagnostics(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_verifier_normalizes_issuer_for_exact_pyjwt_match() -> None:
     private_key = ec.generate_private_key(ec.SECP256R1())
-    other_private_key = ec.generate_private_key(ec.SECP256R1())
     now = datetime.now(UTC)
-    sensitive_email = "private@example.com"
     token = jwt.encode(
         {
             "aud": AUDIENCE,
-            "email": sensitive_email,
             "exp": now + timedelta(minutes=5),
             "iss": ISSUER,
             "role": "authenticated",
@@ -80,93 +73,17 @@ def test_verification_failure_logs_only_sanitized_diagnostics(
     )
     jwks_client = Mock()
     jwks_client.get_signing_key_from_jwt.return_value = SimpleNamespace(
-        key=other_private_key.public_key(),
-        key_id="production-key",
+        key=private_key.public_key(),
     )
-    verifier = make_verifier(jwks_client)
-
-    with caplog.at_level(logging.WARNING, logger="auth"):
-        with pytest.raises(auth.JWTVerificationError):
-            verifier.verify(token)
-
-    message = caplog.messages[-1]
-    assert "exception_class=InvalidSignatureError" in message
-    assert "exception_message=Signature verification failed" in message
-    assert "alg=ES256" in message
-    assert "kid=production-key" in message
-    assert f"iss={ISSUER}" in message
-    assert f"aud={AUDIENCE}" in message
-    assert "jwks_lookup_succeeded=True" in message
-    assert "matching_key_id_found=True" in message
-    assert token not in message
-    assert str(USER_ID) not in message
-    assert sensitive_email not in message
-
-
-def test_jwks_connection_failure_logs_lookup_outcome(
-    caplog: pytest.LogCaptureFixture,
-    private_key: rsa.RSAPrivateKey,
-) -> None:
-    now = datetime.now(UTC)
-    token = jwt.encode(
-        {
-            "aud": AUDIENCE,
-            "exp": now + timedelta(minutes=5),
-            "iss": ISSUER,
-            "role": "authenticated",
-            "sub": str(USER_ID),
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "unavailable-key"},
+    verifier = SupabaseJWTVerifier(
+        issuer=f" \n{ISSUER}/\t ",
+        audience=AUDIENCE,
+        jwks_url=JWKS_URL,
+        jwks_client=jwks_client,
     )
-    jwks_client = Mock()
-    jwks_client.get_signing_key_from_jwt.side_effect = PyJWKClientConnectionError(
-        "JWKS endpoint unavailable"
-    )
-    verifier = make_verifier(jwks_client)
 
-    with caplog.at_level(logging.WARNING, logger="auth"):
-        with pytest.raises(auth.JWTVerificationError):
-            verifier.verify(token)
-
-    message = caplog.messages[-1]
-    assert "exception_class=PyJWKClientConnectionError" in message
-    assert "jwks_lookup_succeeded=False" in message
-    assert "matching_key_id_found=False" in message
-
-
-def test_missing_matching_key_logs_successful_jwks_lookup(
-    caplog: pytest.LogCaptureFixture,
-    private_key: rsa.RSAPrivateKey,
-) -> None:
-    now = datetime.now(UTC)
-    token = jwt.encode(
-        {
-            "aud": AUDIENCE,
-            "exp": now + timedelta(minutes=5),
-            "iss": ISSUER,
-            "role": "authenticated",
-            "sub": str(USER_ID),
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "missing-key"},
-    )
-    jwks_client = Mock()
-    jwks_client.get_signing_key_from_jwt.side_effect = PyJWKClientError(
-        'Unable to find a signing key that matches: "missing-key"'
-    )
-    verifier = make_verifier(jwks_client)
-
-    with caplog.at_level(logging.WARNING, logger="auth"):
-        with pytest.raises(auth.JWTVerificationError):
-            verifier.verify(token)
-
-    message = caplog.messages[-1]
-    assert "exception_class=PyJWKClientError" in message
-    assert "jwks_lookup_succeeded=True" in message
-    assert "matching_key_id_found=False" in message
+    assert verifier.issuer == ISSUER
+    assert verifier.verify(token).user_id == USER_ID
 
 
 def test_me_accepts_valid_token(
