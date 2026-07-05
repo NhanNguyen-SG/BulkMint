@@ -25,6 +25,7 @@ CARD_ID = UUID("8e926c43-a64d-485c-80e8-e22fe63d78ba")
 ACCESS_TOKEN = "test-access-token"
 IMAGE_ID = UUID("9a50528e-6390-44da-a5e0-88e42115ab55")
 CARD_PAYLOAD = {
+    "detected_game": "One Piece",
     "card_name": "Monkey D. Luffy",
     "set": "Romance Dawn",
     "card_number": "OP01-024",
@@ -45,6 +46,7 @@ class FakeCardsRepository:
         self.list_status: str | None = None
         self.list_set_name: str | None = None
         self.list_rarity: str | None = None
+        self.list_detected_game: str | None = None
         self.list_limit: int | None = None
         self.create_owner_id: UUID | None = None
         self.create_access_token: str | None = None
@@ -66,6 +68,7 @@ class FakeCardsRepository:
         status: str | None = None,
         set_name: str | None = None,
         rarity: str | None = None,
+        detected_game: str | None = None,
         limit: int = 50,
     ) -> list[CardResponse]:
         self.list_owner_id = owner_id
@@ -74,6 +77,7 @@ class FakeCardsRepository:
         self.list_status = status
         self.list_set_name = set_name
         self.list_rarity = rarity
+        self.list_detected_game = detected_game
         self.list_limit = limit
         return self.cards
 
@@ -122,6 +126,9 @@ class FakeCardsRepository:
         return self.cards[0].model_copy(
             update={
                 "card_name": card_update.card_name or self.cards[0].card_name,
+                "detected_game": (
+                    card_update.detected_game or self.cards[0].detected_game
+                ),
                 "set": card_update.set or self.cards[0].set,
                 "card_number": card_update.card_number or self.cards[0].card_number,
                 "rarity": card_update.rarity or self.cards[0].rarity,
@@ -288,6 +295,7 @@ def test_list_cards_forwards_search_and_filters(
             "status": "active",
             "set_name": "Romance",
             "rarity": "Rare",
+            "detected_game": "One Piece",
             "limit": 25,
         },
     )
@@ -298,6 +306,7 @@ def test_list_cards_forwards_search_and_filters(
     assert repository.list_status == "active"
     assert repository.list_set_name == "Romance"
     assert repository.list_rarity == "Rare"
+    assert repository.list_detected_game == "One Piece"
     assert repository.list_limit == 25
 
 
@@ -397,6 +406,7 @@ def test_update_card_uses_authenticated_owner(
         f"/cards/{CARD_ID}",
         json={
             "card_name": "Updated Luffy",
+            "detected_game": "Pokemon",
             "set": "Paramount War",
             "card_number": "OP02-001",
             "rarity": "Super Rare",
@@ -409,6 +419,7 @@ def test_update_card_uses_authenticated_owner(
 
     assert response.status_code == 200
     assert response.json()["card_name"] == "Updated Luffy"
+    assert response.json()["detected_game"] == "Pokemon"
     assert response.json()["price_amount"] == "12.50"
     assert response.json()["currency"] == "USD"
     assert response.json()["status"] == "active"
@@ -553,6 +564,7 @@ def test_delete_card_returns_error_when_image_cleanup_fails(
         {"image_id": str(IMAGE_ID)},
         {"storage_path": f"{USER_ID}/{CARD_ID}/{IMAGE_ID}.png"},
         {"status": "invalid"},
+        {"detected_game": "Unsupported Game"},
         {"currency": "US"},
         {"price_amount": "-1.00"},
     ],

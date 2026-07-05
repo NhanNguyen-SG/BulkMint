@@ -6,13 +6,14 @@ from uuid import UUID
 import httpx
 import pytest
 
-from card_models import CardCreate, CardUpdate
+from card_models import CardCreate, CardUpdate, DetectedGame
 from cards_repository import CardNotFoundError, SupabaseCardsRepository
 
 USER_ID = UUID("c03d31fd-fe2e-45f8-8df3-fc6a1a4927bf")
 CARD_ID = UUID("089c94e8-489a-4f87-a1ee-80f25c3f4b34")
 ACCESS_TOKEN = "test-user-access-token"
 CARD_PAYLOAD = {
+    "detected_game": "One Piece",
     "card_name": "Roronoa Zoro",
     "set": "Romance Dawn",
     "card_number": "OP01-025",
@@ -25,6 +26,7 @@ CARD_PAYLOAD = {
 DATABASE_ROW = {
     "id": str(CARD_ID),
     "created_at": datetime(2026, 7, 1, tzinfo=UTC).isoformat(),
+    "detected_game": CARD_PAYLOAD["detected_game"],
     "card_name": CARD_PAYLOAD["card_name"],
     "set_name": CARD_PAYLOAD["set"],
     "card_number": CARD_PAYLOAD["card_number"],
@@ -61,17 +63,40 @@ def test_repository_lists_only_authenticated_owner_cards() -> None:
 
 
 @pytest.mark.parametrize(
-    ("q", "set_name", "rarity", "expected_parameter", "expected_value"),
+    (
+        "q",
+        "set_name",
+        "rarity",
+        "detected_game",
+        "expected_parameter",
+        "expected_value",
+    ),
     [
-        ("Zoro", None, None, "card_name", "ilike.*Zoro*"),
-        (None, "Romance", None, "set_name", "ilike.*Romance*"),
-        (None, None, "Rare", "rarity", "ilike.Rare"),
+        (
+            "Zoro",
+            None,
+            None,
+            None,
+            "or",
+            "(card_name.ilike.*Zoro*,detected_game.ilike.*Zoro*)",
+        ),
+        (None, "Romance", None, None, "set_name", "ilike.*Romance*"),
+        (None, None, "Rare", None, "rarity", "ilike.Rare"),
+        (
+            None,
+            None,
+            None,
+            "One Piece",
+            "detected_game",
+            "eq.One Piece",
+        ),
     ],
 )
 def test_repository_applies_inventory_search_filters(
     q: str | None,
     set_name: str | None,
     rarity: str | None,
+    detected_game: DetectedGame | None,
     expected_parameter: str,
     expected_value: str,
 ) -> None:
@@ -93,6 +118,7 @@ def test_repository_applies_inventory_search_filters(
         q=q,
         set_name=set_name,
         rarity=rarity,
+        detected_game=detected_game,
     )
 
     assert len(cards) == 1
@@ -132,6 +158,7 @@ def test_repository_attaches_owner_to_created_card() -> None:
 
         payload = json.loads(request.content)
         assert payload["owner_id"] == str(USER_ID)
+        assert payload["detected_game"] == CARD_PAYLOAD["detected_game"]
         assert payload["set_name"] == CARD_PAYLOAD["set"]
         assert payload["price_amount"] == 8
         assert payload["currency"] == "USD"
@@ -167,6 +194,7 @@ def test_repository_updates_only_authenticated_owner_cards() -> None:
 
         payload = json.loads(request.content)
         assert payload == {
+            "detected_game": "Pokemon",
             "card_name": "Updated Zoro",
             "price_amount": 12.5,
             "currency": "USD",
@@ -177,6 +205,7 @@ def test_repository_updates_only_authenticated_owner_cards() -> None:
             json=[
                 {
                     **DATABASE_ROW,
+                    "detected_game": "Pokemon",
                     "card_name": "Updated Zoro",
                     "price_amount": 12.5,
                     "status": "active",
@@ -196,6 +225,7 @@ def test_repository_updates_only_authenticated_owner_cards() -> None:
         card_id=CARD_ID,
         card_update=CardUpdate.model_validate(
             {
+                "detected_game": "Pokemon",
                 "card_name": "Updated Zoro",
                 "price_amount": "12.50",
                 "currency": "usd",
@@ -205,8 +235,24 @@ def test_repository_updates_only_authenticated_owner_cards() -> None:
     )
 
     assert card.card_name == "Updated Zoro"
+    assert card.detected_game == "Pokemon"
     assert card.price_amount == Decimal("12.5")
     assert card.status == "active"
+
+
+def test_repository_defaults_legacy_card_rows_to_unknown_game() -> None:
+    legacy_row = {key: value for key, value in DATABASE_ROW.items() if key != "detected_game"}
+    repository = SupabaseCardsRepository(
+        supabase_url="https://test-project.supabase.co",
+        publishable_key="test-publishable-key",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=[legacy_row])
+        ),
+    )
+
+    cards = repository.list_cards(owner_id=USER_ID, access_token=ACCESS_TOKEN)
+
+    assert cards[0].detected_game == "Unknown"
 
 
 def test_repository_raises_not_found_when_update_matches_no_rows() -> None:

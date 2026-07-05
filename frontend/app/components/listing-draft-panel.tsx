@@ -39,6 +39,7 @@ type DraftForm = {
 
 type ListingDraftPanelProps = {
   cardId: string;
+  cardGame: string;
   cardName: string;
   cardImageUrl: string | null;
   cardSet: string;
@@ -55,6 +56,10 @@ type SpecificRow = {
 
 const DRAFT_STATUSES: ListingDraftStatus[] = ["draft", "ready", "archived"];
 const COMMON_SPECIFICS = [
+  {
+    label: "Game",
+    aliases: ["game", "detectedgame", "tradingcardgame"],
+  },
   { label: "Card Name", aliases: ["cardname", "name"] },
   { label: "Set", aliases: ["set", "setname"] },
   { label: "Card Number", aliases: ["cardnumber", "number"] },
@@ -230,6 +235,7 @@ function formFromDraft(draft: ListingDraft): DraftForm {
 
 export function ListingDraftPanel({
   cardId,
+  cardGame,
   cardName,
   cardImageUrl,
   cardSet,
@@ -478,6 +484,7 @@ export function ListingDraftPanel({
     }, null)?.id ?? null;
   const specifics = selectedDraft
     ? itemSpecificRows(selectedDraft.item_specifics_json, {
+        Game: cardGame,
         "Card Name": cardName,
         Set: cardSet,
         "Card Number": cardNumber,
@@ -495,6 +502,7 @@ export function ListingDraftPanel({
         <div>
           <h3 className="font-semibold">Listing Drafts</h3>
           <p className="text-xs text-zinc-500">{cardName}</p>
+          <p className="text-xs text-zinc-500">Game: {cardGame}</p>
         </div>
         <button
           type="button"

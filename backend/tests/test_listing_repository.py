@@ -113,6 +113,7 @@ def test_repository_loads_owner_card_context() -> None:
             json=[
                 {
                     "id": str(CARD_ID),
+                    "detected_game": "One Piece",
                     "card_name": "Roronoa Zoro",
                     "set_name": "Romance Dawn",
                     "card_number": "OP01-025",
@@ -136,6 +137,7 @@ def test_repository_loads_owner_card_context() -> None:
     )
 
     assert card.card_name == "Roronoa Zoro"
+    assert card.detected_game == "One Piece"
     assert str(card.price_amount) == "12.34"
 
 

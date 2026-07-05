@@ -5,12 +5,19 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from card_models import CardCreate, CardResponse, CardStatus, CardUpdate
+from card_models import (
+    CardCreate,
+    CardResponse,
+    CardStatus,
+    CardUpdate,
+    DetectedGame,
+)
 
 CARD_COLUMNS = ",".join(
     (
         "id",
         "created_at",
+        "detected_game",
         "card_name",
         "set_name",
         "card_number",
@@ -75,6 +82,7 @@ class SupabaseCardsRepository:
         status: CardStatus | None = None,
         set_name: str | None = None,
         rarity: str | None = None,
+        detected_game: DetectedGame | None = None,
         limit: int = 50,
     ) -> list[CardResponse]:
         params = {
@@ -85,11 +93,17 @@ class SupabaseCardsRepository:
             "limit": str(limit),
         }
         if q is not None:
-            params["card_name"] = f"ilike.*{self._escape_like_pattern(q)}*"
+            escaped_query = self._escape_like_pattern(q)
+            params["or"] = (
+                f"(card_name.ilike.*{escaped_query}*,"
+                f"detected_game.ilike.*{escaped_query}*)"
+            )
         if set_name is not None:
             params["set_name"] = f"ilike.*{self._escape_like_pattern(set_name)}*"
         if rarity is not None:
             params["rarity"] = f"ilike.{self._escape_like_pattern(rarity)}"
+        if detected_game is not None:
+            params["detected_game"] = f"eq.{detected_game}"
 
         response = self._request(
             "GET",

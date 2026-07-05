@@ -36,7 +36,21 @@ const BROWSER_PREVIEW_TYPES = new Set([
   "image/avif",
 ]);
 
+const SUPPORTED_GAMES = [
+  "Pokemon",
+  "One Piece",
+  "Magic: The Gathering",
+  "Yu-Gi-Oh!",
+  "Disney Lorcana",
+  "Digimon",
+  "Dragon Ball Super",
+  "Unknown",
+] as const;
+
+type DetectedGame = (typeof SUPPORTED_GAMES)[number];
+
 type AnalysisResult = {
+  detected_game: DetectedGame;
   card_name: string;
   set: string;
   card_number: string;
@@ -58,6 +72,7 @@ type InventoryCard = AnalysisResult & {
 };
 
 type EditCardForm = {
+  detected_game: DetectedGame;
   card_name: string;
   set: string;
   card_number: string;
@@ -71,6 +86,7 @@ type EditCardForm = {
 type InventoryFilters = {
   q: string;
   status: "" | InventoryCard["status"];
+  detected_game: "" | DetectedGame;
   set_name: string;
   rarity: string;
 };
@@ -86,6 +102,7 @@ const CARD_STATUSES: InventoryCard["status"][] = [
 const EMPTY_INVENTORY_FILTERS: InventoryFilters = {
   q: "",
   status: "",
+  detected_game: "",
   set_name: "",
   rarity: "",
 };
@@ -164,6 +181,9 @@ export default function Home() {
       const query = new URLSearchParams({ limit: "50" });
       if (filters.q.trim()) query.set("q", filters.q.trim());
       if (filters.status) query.set("status", filters.status);
+      if (filters.detected_game) {
+        query.set("detected_game", filters.detected_game);
+      }
       if (filters.set_name.trim()) query.set("set_name", filters.set_name.trim());
       if (filters.rarity.trim()) query.set("rarity", filters.rarity.trim());
 
@@ -357,6 +377,7 @@ export default function Home() {
     setRemovalError(null);
     setRemovalErrorCardId(null);
     setEditForm({
+      detected_game: card.detected_game,
       card_name: card.card_name,
       set: card.set,
       card_number: card.card_number,
@@ -416,6 +437,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          detected_game: editForm.detected_game,
           card_name: editForm.card_name,
           set: editForm.set,
           card_number: editForm.card_number,
@@ -544,6 +566,11 @@ export default function Home() {
           AI-powered TCG listing assistant
         </p>
 
+        <p className="mb-4 text-sm text-zinc-400">
+          Supports Pokémon, One Piece, MTG, Yu-Gi-Oh!, Lorcana, Digimon,
+          Dragon Ball, and more.
+        </p>
+
         <label
           htmlFor="card-upload"
           onDragOver={(event) => event.preventDefault()}
@@ -609,6 +636,7 @@ export default function Home() {
             <p className="mb-3 text-sm text-zinc-500">
               Confirm these details before saving.
             </p>
+            <p><span className="text-zinc-400">Game:</span> {result.detected_game}</p>
             <p><span className="text-zinc-400">Card:</span> {result.card_name}</p>
             <p><span className="text-zinc-400">Set:</span> {result.set}</p>
             <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
@@ -652,14 +680,36 @@ export default function Home() {
             className="mb-4 grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 md:grid-cols-2"
           >
             <label className="text-sm md:col-span-2">
-              <span className="mb-1 block text-zinc-400">Search card name</span>
+              <span className="mb-1 block text-zinc-400">
+                Search card name or game
+              </span>
               <input
                 type="search"
                 value={filterForm.q}
                 onChange={(event) => updateFilter("q", event.target.value)}
-                placeholder="e.g. Monkey D. Luffy"
+                placeholder="e.g. Charizard or Pokemon"
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
               />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-zinc-400">Game</span>
+              <select
+                value={filterForm.detected_game}
+                onChange={(event) =>
+                  updateFilter(
+                    "detected_game",
+                    event.target.value as InventoryFilters["detected_game"],
+                  )
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+              >
+                <option value="">All games</option>
+                {SUPPORTED_GAMES.map((game) => (
+                  <option key={game} value={game}>
+                    {game}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm">
               <span className="mb-1 block text-zinc-400">Set</span>
@@ -679,7 +729,7 @@ export default function Home() {
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
               />
             </label>
-            <label className="text-sm md:col-span-2">
+            <label className="text-sm">
               <span className="mb-1 block text-zinc-400">Status</span>
               <select
                 value={filterForm.status}
@@ -771,6 +821,9 @@ export default function Home() {
                         <p className="break-words text-zinc-400">
                           {card.set} • {card.rarity}
                         </p>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {card.detected_game}
+                        </p>
                         <p className="text-green-400 mt-2">
                           {card.suggested_price}
                         </p>
@@ -831,6 +884,7 @@ export default function Home() {
                   {draftCardId === card.id && (
                     <ListingDraftPanel
                       cardId={card.id}
+                      cardGame={card.detected_game}
                       cardName={card.card_name}
                       cardImageUrl={card.image_url}
                       cardSet={card.set}
@@ -848,6 +902,25 @@ export default function Home() {
                       </p>
 
                       <div className="grid gap-3 md:grid-cols-2">
+                        <label className="text-sm">
+                          <span className="mb-1 block text-zinc-400">Game</span>
+                          <select
+                            value={editForm.detected_game}
+                            onChange={(event) =>
+                              updateEditField(
+                                "detected_game",
+                                event.target.value as DetectedGame,
+                              )
+                            }
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                          >
+                            {SUPPORTED_GAMES.map((game) => (
+                              <option key={game} value={game}>
+                                {game}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="text-sm">
                           <span className="mb-1 block text-zinc-400">Card Name</span>
                           <input

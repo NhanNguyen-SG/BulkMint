@@ -13,7 +13,7 @@ from image_storage import CardImageForGeneration
 from listing_models import ListingDraftCreate
 from listing_repository import ListingCardContext
 
-LISTING_PROMPT_VERSION = "listing-draft-v2"
+LISTING_PROMPT_VERSION = "listing-draft-v3"
 DEFAULT_LISTING_MODEL = "gpt-4.1-mini"
 
 LISTING_GENERATION_PROMPT = """
@@ -25,6 +25,11 @@ Do not invent grading, authentication, provenance, edition, language, condition
 details, or marketplace research that the inputs do not support.
 
 Requirements:
+- Adapt the title, description, category suggestion, item specifics, and keywords
+  to the supplied `detected_game`. Do not assume One Piece or substitute a
+  different game.
+- Use terminology appropriate to that game only when supported by the saved
+  card data or image.
 - Produce a concise marketplace title no longer than 80 characters.
 - Produce a factual seller-friendly description.
 - Treat the saved condition as an estimate and write a cautious condition summary.
@@ -181,6 +186,7 @@ class ListingGenerationService:
         image: CardImageForGeneration | None,
     ) -> ListingDraftCreate:
         card_context = {
+            "detected_game": card.detected_game,
             "card_name": card.card_name,
             "set_name": card.set_name,
             "card_number": card.card_number,

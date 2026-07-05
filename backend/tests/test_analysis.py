@@ -17,6 +17,7 @@ from main import app
 
 USER_ID = UUID("9fe0413d-9038-4da6-8f5f-dccaa95b7922")
 ANALYSIS_RESULT = {
+    "detected_game": "One Piece",
     "card_name": "Test Card",
     "set": "Test Set",
     "card_number": "TEST-001",
@@ -138,3 +139,52 @@ def test_analyze_card_accepts_and_normalizes_supported_image(
     with Image.open(BytesIO(normalized_bytes)) as normalized:
         assert normalized.format == "JPEG"
         assert normalized.mode == "RGB"
+
+
+@pytest.mark.parametrize(
+    ("detected_game", "card_name", "card_number"),
+    [
+        ("Pokemon", "Charizard ex", "125/197"),
+        ("One Piece", "Monkey D. Luffy", "OP01-003"),
+        ("Magic: The Gathering", "Lightning Bolt", "150"),
+        ("Yu-Gi-Oh!", "Dark Magician", "LOB-005"),
+    ],
+)
+def test_analyze_card_detects_representative_trading_card_games(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    detected_game: str,
+    card_name: str,
+    card_number: str,
+) -> None:
+    result = {
+        **ANALYSIS_RESULT,
+        "detected_game": detected_game,
+        "card_name": card_name,
+        "card_number": card_number,
+    }
+    completion = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content=json.dumps(result)))
+        ]
+    )
+    create_completion = Mock(return_value=completion)
+    openai_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_completion),
+        )
+    )
+    monkeypatch.setattr(main, "get_openai_client", lambda: openai_client)
+
+    response = authenticated_client.post(
+        "/analyze-card",
+        files={"file": ("card.png", image_bytes("PNG"), "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["detected_game"] == detected_game
+    prompt = create_completion.call_args.kwargs["messages"][0]["content"][0][
+        "text"
+    ]
+    assert "First identify the trading card game" in prompt
+    assert '"Magic: The Gathering"' in prompt

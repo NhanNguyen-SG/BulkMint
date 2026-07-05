@@ -67,6 +67,7 @@ class FakeListingRepository:
         )
         return ListingCardContext(
             card_id=card_id,
+            detected_game="One Piece",
             card_name="Monkey D. Luffy",
             set_name="Romance Dawn",
             card_number="OP01-024",

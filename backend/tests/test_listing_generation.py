@@ -38,6 +38,7 @@ class FakeOpenAIClient:
 def card_context() -> ListingCardContext:
     return ListingCardContext(
         card_id=CARD_ID,
+        detected_game="One Piece",
         card_name="Monkey D. Luffy",
         set_name="Romance Dawn",
         card_number="OP01-024",
@@ -95,11 +96,42 @@ def test_generate_uses_structured_output_card_data_and_image(
     assert request["store"] is False
     input_items = request["input"][0]["content"]
     assert input_items[0]["type"] == "input_text"
+    assert '"detected_game": "One Piece"' in input_items[0]["text"]
     assert "Monkey D. Luffy" in input_items[0]["text"]
     assert '"verified_market_data": null' in input_items[0]["text"]
     assert "saved_price_amount" not in input_items[0]["text"]
     assert input_items[1]["type"] == "input_image"
     assert input_items[1]["image_url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.parametrize(
+    "detected_game",
+    ["Pokemon", "One Piece", "Magic: The Gathering", "Yu-Gi-Oh!"],
+)
+def test_generate_includes_representative_game_context(
+    card_context: ListingCardContext,
+    generated_output: GeneratedListingDraft,
+    detected_game: str,
+) -> None:
+    client = FakeOpenAIClient(generated_output)
+    service = ListingGenerationService(client=client, model="gpt-4.1-mini")
+    game_card = ListingCardContext(
+        card_id=card_context.card_id,
+        detected_game=detected_game,
+        card_name=card_context.card_name,
+        set_name=card_context.set_name,
+        card_number=card_context.card_number,
+        rarity=card_context.rarity,
+        condition_guess=card_context.condition_guess,
+        price_amount=card_context.price_amount,
+        currency=card_context.currency,
+    )
+
+    service.generate(card=game_card, image=None)
+
+    input_text = client.responses.calls[0]["input"][0]["content"][0]["text"]
+    assert f'"detected_game": "{detected_game}"' in input_text
+    assert "Do not assume One Piece" in LISTING_GENERATION_PROMPT
 
 
 def test_generated_price_fields_are_optional(

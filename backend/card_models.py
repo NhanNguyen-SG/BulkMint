@@ -8,6 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 PRICE_PATTERN = re.compile(r"\d[\d,]*(?:\.\d{1,2})?")
 CardStatus = Literal["draft", "active", "listed", "sold", "archived"]
+DetectedGame = Literal[
+    "Pokemon",
+    "One Piece",
+    "Magic: The Gathering",
+    "Yu-Gi-Oh!",
+    "Disney Lorcana",
+    "Digimon",
+    "Dragon Ball Super",
+    "Unknown",
+]
 CardName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 SetName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 CardNumber = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -67,6 +77,7 @@ def display_price(amount: object, currency: object) -> str:
 class CardCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    detected_game: DetectedGame = "Unknown"
     card_name: CardName
     set: SetName
     card_number: CardNumber
@@ -81,6 +92,7 @@ class CardCreate(BaseModel):
 
         return {
             "owner_id": str(owner_id),
+            "detected_game": self.detected_game,
             "card_name": self.card_name,
             "set_name": self.set,
             "card_number": self.card_number,
@@ -110,6 +122,7 @@ class CardResponse(CardCreate):
             {
                 "id": row.get("id"),
                 "created_at": row.get("created_at"),
+                "detected_game": row.get("detected_game") or "Unknown",
                 "card_name": row.get("card_name"),
                 "set": row.get("set_name"),
                 "card_number": row.get("card_number"),
@@ -132,6 +145,7 @@ class CardResponse(CardCreate):
 class CardUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    detected_game: DetectedGame | None = None
     card_name: CardName | None = None
     set: SetName | None = None
     card_number: CardNumber | None = None

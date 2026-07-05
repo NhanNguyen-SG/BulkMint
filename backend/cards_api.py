@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import ValidationError
 
 from auth import AuthenticatedUser, get_current_user
-from card_models import CardCreate, CardResponse, CardStatus, CardUpdate
+from card_models import (
+    CardCreate,
+    CardResponse,
+    CardStatus,
+    CardUpdate,
+    DetectedGame,
+)
 from cards_repository import (
     CardNotFoundError,
     CardsRepositoryConfigurationError,
@@ -77,6 +83,7 @@ def list_cards(
     card_status: Annotated[CardStatus | None, Query(alias="status")] = None,
     set_name: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     rarity: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    detected_game: Annotated[DetectedGame | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[CardResponse]:
     try:
@@ -87,6 +94,7 @@ def list_cards(
             status=card_status,
             set_name=set_name,
             rarity=rarity,
+            detected_game=detected_game,
             limit=limit,
         )
         cards = attach_card_images(cards=cards, user=user)

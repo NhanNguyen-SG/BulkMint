@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from app_config import AppSettings
 from auth import AuthenticatedUser, get_current_user
+from card_models import CardCreate
 from cards_api import router as cards_router
 from image_validation import read_validated_image
 from listing_api import router as listing_router
@@ -73,11 +74,20 @@ async def analyze_card(
                     {
                         "type": "text",
                         "text": """
-Analyze this One Piece trading card for a seller.
+Analyze this trading card for a seller.
+
+First identify the trading card game. Then identify the card. Finally extract
+fields appropriate to that game's own terminology and visible card details.
+
+The detected_game value must be exactly one of:
+"Pokemon", "One Piece", "Magic: The Gathering", "Yu-Gi-Oh!",
+"Disney Lorcana", "Digimon", "Dragon Ball Super", or "Unknown".
 
 Return ONLY valid JSON in this exact format:
 
 {
+
+  "detected_game": "",
 
   "card_name": "",
 
@@ -101,7 +111,9 @@ Rules:
 
 - Use the visible card text and card number if possible.
 
-- If unsure, use "Unknown".
+- If the game or any field is uncertain, use "Unknown" for that value.
+
+- Do not apply One Piece-specific terminology to other games.
 
 - Keep ebay_title under 80 characters.
 
@@ -131,5 +143,4 @@ Only return JSON.
         raise ValueError("OpenAI returned no response content")
 
     parsed = json.loads(content)
-
-    return parsed
+    return CardCreate.model_validate(parsed).model_dump()

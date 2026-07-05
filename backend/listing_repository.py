@@ -42,6 +42,7 @@ LISTING_DRAFT_COLUMNS = ",".join(
 LISTING_CARD_COLUMNS = ",".join(
     (
         "id",
+        "detected_game",
         "card_name",
         "set_name",
         "card_number",
@@ -56,6 +57,7 @@ LISTING_CARD_COLUMNS = ",".join(
 @dataclass(frozen=True)
 class ListingCardContext:
     card_id: UUID
+    detected_game: str
     card_name: str
     set_name: str | None
     card_number: str | None
@@ -141,6 +143,7 @@ class SupabaseListingRepository:
             )
             return ListingCardContext(
                 card_id=UUID(str(row["id"])),
+                detected_game=str(row.get("detected_game") or "Unknown"),
                 card_name=str(row["card_name"]),
                 set_name=self._optional_string(row.get("set_name")),
                 card_number=self._optional_string(row.get("card_number")),
