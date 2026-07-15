@@ -1,147 +1,36 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  authenticatedApiFetch,
-  AuthenticationRequiredError,
-} from "@/lib/api/authenticated-fetch";
+
+import { AnalysisReview } from "./components/analysis-review";
 import { AuthStatus } from "./components/auth-status";
-import { ListingDraftPanel } from "./components/listing-draft-panel";
+import { InventoryFiltersForm } from "./components/inventory-filters";
+import { InventoryList } from "./components/inventory-list";
+import { UploadPanel } from "./components/upload-panel";
 
-const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set([
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "image/avif",
-]);
-const ALLOWED_IMAGE_EXTENSIONS = new Set([
-  "jpg",
-  "jpeg",
-  "png",
-  "webp",
-  "heic",
-  "heif",
-  "avif",
-]);
-const GENERIC_IMAGE_TYPES = new Set(["", "application/octet-stream"]);
-const BROWSER_PREVIEW_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/avif",
-]);
-
-const SUPPORTED_GAMES = [
-  "Pokemon",
-  "One Piece",
-  "Magic: The Gathering",
-  "Yu-Gi-Oh!",
-  "Disney Lorcana",
-  "Digimon",
-  "Dragon Ball Super",
-  "Unknown",
-] as const;
-
-type DetectedGame = (typeof SUPPORTED_GAMES)[number];
-
-type AnalysisResult = {
-  detected_game: DetectedGame;
-  card_name: string;
-  set: string;
-  card_number: string;
-  rarity: string;
-  condition_guess: string;
-  suggested_price: string;
-  ebay_title: string;
-  ebay_description: string;
-};
-
-type InventoryCard = AnalysisResult & {
-  id: string;
-  created_at: string;
-  price_amount: number | string | null;
-  currency: string;
-  status: "draft" | "active" | "listed" | "sold" | "archived";
-  image_id: string | null;
-  image_url: string | null;
-};
-
-type EditCardForm = {
-  detected_game: DetectedGame;
-  card_name: string;
-  set: string;
-  card_number: string;
-  rarity: string;
-  condition_guess: string;
-  price_amount: string;
-  currency: string;
-  status: InventoryCard["status"];
-};
-
-type InventoryFilters = {
-  q: string;
-  status: "" | InventoryCard["status"];
-  detected_game: "" | DetectedGame;
-  set_name: string;
-  rarity: string;
-};
-
-const CARD_STATUSES: InventoryCard["status"][] = [
-  "draft",
-  "active",
-  "listed",
-  "sold",
-  "archived",
-];
-
-const EMPTY_INVENTORY_FILTERS: InventoryFilters = {
-  q: "",
-  status: "",
-  detected_game: "",
-  set_name: "",
-  rarity: "",
-};
-
-async function apiError(response: Response, fallback: string): Promise<Error> {
-  try {
-    const body: unknown = await response.json();
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      "detail" in body &&
-      typeof body.detail === "string"
-    ) {
-      return new Error(body.detail);
-    }
-  } catch {
-    // Use the status-based fallback when the response is not JSON.
-  }
-
-  return new Error(`${fallback} (HTTP ${response.status})`);
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof AuthenticationRequiredError) {
-    return "Log in before continuing.";
-  }
-  return error instanceof Error ? error.message : fallback;
-}
-
-function reportUnexpectedError(message: string, error: unknown) {
-  if (!(error instanceof AuthenticationRequiredError)) {
-    console.error(message, error);
-  }
-}
+import {
+  analyzeCardImage,
+  archiveCardById,
+  createCard,
+  deleteCardById,
+  fetchCards,
+  updateCard,
+} from "@/lib/api/cards";
+import { errorMessage, reportUnexpectedError } from "@/lib/api/client";
+import { AuthenticationRequiredError } from "@/lib/api/authenticated-fetch";
+import { BROWSER_PREVIEW_TYPES, validateImageFile } from "@/lib/validation/images";
+import type {
+  CardAnalysisResult,
+  EditCardForm,
+  InventoryCard,
+  InventoryFilters,
+} from "@/types/cards";
+import { EMPTY_INVENTORY_FILTERS } from "@/types/cards";
 
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<CardAnalysisResult | null>(null);
   const [inventory, setInventory] = useState<InventoryCard[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -172,27 +61,13 @@ export default function Home() {
   const [draftCardId, setDraftCardId] = useState<string | null>(null);
   const savingRef = useRef(false);
 
-  const fetchInventory = useCallback(async (filters: InventoryFilters) => {
+  const loadInventory = useCallback(async (filters: InventoryFilters) => {
     setInventoryLoading(true);
     setInventoryError(null);
     setInventoryAuthRequired(false);
 
     try {
-      const query = new URLSearchParams({ limit: "50" });
-      if (filters.q.trim()) query.set("q", filters.q.trim());
-      if (filters.status) query.set("status", filters.status);
-      if (filters.detected_game) {
-        query.set("detected_game", filters.detected_game);
-      }
-      if (filters.set_name.trim()) query.set("set_name", filters.set_name.trim());
-      if (filters.rarity.trim()) query.set("rarity", filters.rarity.trim());
-
-      const response = await authenticatedApiFetch(`/cards?${query.toString()}`);
-      if (!response.ok) {
-        throw await apiError(response, "Unable to load inventory");
-      }
-
-      const cards: InventoryCard[] = await response.json();
+      const cards = await fetchCards(filters);
       setInventory(cards);
     } catch (error) {
       if (error instanceof AuthenticationRequiredError) {
@@ -218,20 +93,20 @@ export default function Home() {
   function applyInventoryFilters(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAppliedFilters(filterForm);
-    void fetchInventory(filterForm);
+    void loadInventory(filterForm);
   }
 
   function clearInventoryFilters() {
     setFilterForm(EMPTY_INVENTORY_FILTERS);
     setAppliedFilters(EMPTY_INVENTORY_FILTERS);
-    void fetchInventory(EMPTY_INVENTORY_FILTERS);
+    void loadInventory(EMPTY_INVENTORY_FILTERS);
   }
 
   useEffect(() => {
     // Inventory is loaded asynchronously; state updates occur after the Supabase request.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void fetchInventory(EMPTY_INVENTORY_FILTERS);
-  }, [fetchInventory]);
+    void loadInventory(EMPTY_INVENTORY_FILTERS);
+  }, [loadInventory]);
 
   useEffect(() => {
     return () => {
@@ -248,27 +123,15 @@ export default function Home() {
     setResult(null);
     setSaved(false);
 
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setSelectedFile(null);
+      setSelectedImage(null);
+      setUploadError(validationError);
+      return false;
+    }
+
     const contentType = file.type.trim().toLowerCase();
-    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-    const hasAcceptedType = ALLOWED_IMAGE_TYPES.has(contentType);
-    const hasAcceptedFallbackExtension =
-      GENERIC_IMAGE_TYPES.has(contentType) &&
-      ALLOWED_IMAGE_EXTENSIONS.has(extension);
-
-    if (!hasAcceptedType && !hasAcceptedFallbackExtension) {
-      setSelectedFile(null);
-      setSelectedImage(null);
-      setUploadError("Choose a JPEG, PNG, WebP, HEIC, HEIF, or AVIF image.");
-      return false;
-    }
-
-    if (file.size > MAX_IMAGE_BYTES) {
-      setSelectedFile(null);
-      setSelectedImage(null);
-      setUploadError("Image must be 25 MB or smaller.");
-      return false;
-    }
-
     setSelectedFile(file);
     setSelectedImage(
       BROWSER_PREVIEW_TYPES.has(contentType) ? URL.createObjectURL(file) : null,
@@ -305,20 +168,8 @@ export default function Home() {
     setResult(null);
     setSaved(false);
 
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-
     try {
-      const response = await authenticatedApiFetch("/analyze-card", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw await apiError(response, "Unable to analyze card");
-      }
-
-      const data: AnalysisResult = await response.json();
+      const data = await analyzeCardImage(selectedFile);
       setResult(data);
     } catch (error) {
       reportUnexpectedError("Card analysis error:", error);
@@ -338,22 +189,7 @@ export default function Home() {
     setSaveError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("card", JSON.stringify(result));
-      if (selectedFile) {
-        formData.append("image", selectedFile);
-      }
-
-      const response = await authenticatedApiFetch("/cards", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw await apiError(response, "Unable to save card");
-      }
-
-      const savedCard: InventoryCard = await response.json();
+      const savedCard = await createCard(result, selectedFile);
       setInventory((previous) => {
         if (previous.some((card) => card.id === savedCard.id)) {
           return previous;
@@ -431,32 +267,7 @@ export default function Home() {
     setEditSuccessId(null);
 
     try {
-      const response = await authenticatedApiFetch(`/cards/${cardId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          detected_game: editForm.detected_game,
-          card_name: editForm.card_name,
-          set: editForm.set,
-          card_number: editForm.card_number,
-          rarity: editForm.rarity,
-          condition_guess: editForm.condition_guess,
-          price_amount:
-            editForm.price_amount.trim() === ""
-              ? null
-              : Number(editForm.price_amount),
-          currency: editForm.currency,
-          status: editForm.status,
-        }),
-      });
-
-      if (!response.ok) {
-        throw await apiError(response, "Unable to update card");
-      }
-
-      const updatedCard: InventoryCard = await response.json();
+      const updatedCard = await updateCard(cardId, editForm);
       setInventory((current) =>
         current.map((card) => (card.id === updatedCard.id ? updatedCard : card)),
       );
@@ -487,15 +298,7 @@ export default function Home() {
     setEditForm(null);
 
     try {
-      const response = await authenticatedApiFetch(`/cards/${cardId}/archive`, {
-        method: "PATCH",
-      });
-
-      if (!response.ok) {
-        throw await apiError(response, "Unable to archive card");
-      }
-
-      const archivedCard: InventoryCard = await response.json();
+      const archivedCard = await archiveCardById(cardId);
       if (draftCardId === cardId) setDraftCardId(null);
       setInventory((current) => {
         if (appliedFilters.status === "archived") {
@@ -533,14 +336,7 @@ export default function Home() {
     setEditForm(null);
 
     try {
-      const response = await authenticatedApiFetch(`/cards/${cardId}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw await apiError(response, "Unable to delete card");
-      }
-
+      await deleteCardById(cardId);
       setInventory((current) => current.filter((card) => card.id !== cardId));
       if (draftCardId === cardId) setDraftCardId(null);
     } catch (error) {
@@ -562,67 +358,23 @@ export default function Home() {
 
         <h1 className="text-4xl font-bold mb-2">BulkMint</h1>
 
-        <p className="text-zinc-400 mb-8">
-          AI-powered TCG listing assistant
-        </p>
+        <p className="text-zinc-400 mb-8">AI-powered TCG listing assistant</p>
 
         <p className="mb-4 text-sm text-zinc-400">
           Supports Pokémon, One Piece, MTG, Yu-Gi-Oh!, Lorcana, Digimon,
           Dragon Ball, and more.
         </p>
 
-        <label
-          htmlFor="card-upload"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={handleImageDrop}
-          className="block border-2 border-dashed border-zinc-700 rounded-xl p-8 text-center hover:border-green-500 transition cursor-pointer"
-        >
-          <input
-            id="card-upload"
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif,.jpg,.jpeg,.png,.webp,.heic,.heif,.avif"
-            onChange={handleImageUpload}
-            className="hidden"
-          />
-
-          {selectedImage ? (
-            // Local object URLs are generated from the selected file before upload.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={selectedImage}
-              alt="Selected card"
-              className="mx-auto max-h-80 rounded-xl border border-zinc-700"
-            />
-          ) : selectedFile ? (
-            <>
-              <p className="text-lg font-medium">Selected: {selectedFile.name}</p>
-              <p className="text-sm text-zinc-500 mt-2">
-                A normalized JPEG preview will be created after upload.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-lg font-medium">Upload Card Image</p>
-              <p className="text-sm text-zinc-500 mt-2">
-                JPEG, PNG, WebP, HEIC, HEIF, AVIF • 25 MB maximum
-              </p>
-            </>
-          )}
-        </label>
-
-        {uploadError && (
-          <p role="alert" className="mt-3 text-sm text-red-400">
-            {uploadError}
-          </p>
-        )}
-
-        <button
-          onClick={analyzeCard}
-          disabled={!selectedFile || analyzing || saving}
-          className="w-full mt-6 bg-green-500 hover:bg-green-400 disabled:bg-zinc-600 disabled:text-zinc-300 text-black font-semibold py-3 rounded-xl transition"
-        >
-          {analyzing ? "Analyzing…" : "Analyze Card"}
-        </button>
+        <UploadPanel
+          selectedFile={selectedFile}
+          selectedImage={selectedImage}
+          uploadError={uploadError}
+          analyzing={analyzing}
+          saving={saving}
+          onImageUpload={handleImageUpload}
+          onImageDrop={handleImageDrop}
+          onAnalyze={analyzeCard}
+        />
 
         {analysisError && (
           <p role="alert" className="mt-3 text-sm text-red-400">
@@ -631,432 +383,51 @@ export default function Home() {
         )}
 
         {result && (
-          <div className="mt-6 bg-zinc-950 border border-zinc-800 rounded-xl p-5">
-            <h2 className="text-xl font-semibold mb-1">Review Analysis</h2>
-            <p className="mb-3 text-sm text-zinc-500">
-              Confirm these details before saving.
-            </p>
-            <p><span className="text-zinc-400">Game:</span> {result.detected_game}</p>
-            <p><span className="text-zinc-400">Card:</span> {result.card_name}</p>
-            <p><span className="text-zinc-400">Set:</span> {result.set}</p>
-            <p><span className="text-zinc-400">Rarity:</span> {result.rarity}</p>
-            <p><span className="text-zinc-400">Suggested Price:</span> {result.suggested_price}</p>
-            <p><span className="text-zinc-400">Card Number:</span> {result.card_number}</p>
-            <p><span className="text-zinc-400">Condition Guess:</span> {result.condition_guess}</p>
-
-            <div className="mt-5 border-t border-zinc-800 pt-4">
-              <h3 className="font-semibold mb-2">eBay Draft</h3>
-              <p><span className="text-zinc-400">Title:</span> {result.ebay_title}</p>
-              <p className="mt-2"><span className="text-zinc-400">Description:</span> {result.ebay_description}</p>
-            </div>
-
-            <button
-              type="button"
-              onClick={saveCard}
-              disabled={saving || saved}
-              className="mt-5 w-full rounded-lg bg-green-500 py-2.5 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-            >
-              {saving ? "Saving…" : saved ? "Saved" : "Save to Inventory"}
-            </button>
-
-            {saveError && (
-              <p role="alert" className="mt-3 text-sm text-red-400">
-                {saveError}
-              </p>
-            )}
-            {saved && (
-              <p className="mt-3 text-sm text-green-400">
-                Card saved to inventory.
-              </p>
-            )}
-          </div>
+          <AnalysisReview
+            result={result}
+            saving={saving}
+            saved={saved}
+            saveError={saveError}
+            onSave={saveCard}
+          />
         )}
 
         <div className="mt-8">
           <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
 
-          <form
-            onSubmit={applyInventoryFilters}
-            className="mb-4 grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 md:grid-cols-2"
-          >
-            <label className="text-sm md:col-span-2">
-              <span className="mb-1 block text-zinc-400">
-                Search card name or game
-              </span>
-              <input
-                type="search"
-                value={filterForm.q}
-                onChange={(event) => updateFilter("q", event.target.value)}
-                placeholder="e.g. Charizard or Pokemon"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-zinc-400">Game</span>
-              <select
-                value={filterForm.detected_game}
-                onChange={(event) =>
-                  updateFilter(
-                    "detected_game",
-                    event.target.value as InventoryFilters["detected_game"],
-                  )
-                }
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-              >
-                <option value="">All games</option>
-                {SUPPORTED_GAMES.map((game) => (
-                  <option key={game} value={game}>
-                    {game}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-zinc-400">Set</span>
-              <input
-                value={filterForm.set_name}
-                onChange={(event) => updateFilter("set_name", event.target.value)}
-                placeholder="All sets"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-zinc-400">Rarity</span>
-              <input
-                value={filterForm.rarity}
-                onChange={(event) => updateFilter("rarity", event.target.value)}
-                placeholder="All rarities"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-zinc-400">Status</span>
-              <select
-                value={filterForm.status}
-                onChange={(event) =>
-                  updateFilter(
-                    "status",
-                    event.target.value as InventoryFilters["status"],
-                  )
-                }
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-              >
-                <option value="">All active inventory</option>
-                {CARD_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex gap-3 md:col-span-2">
-              <button
-                type="submit"
-                disabled={inventoryLoading}
-                className="rounded-lg bg-green-500 px-4 py-2 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-              >
-                {inventoryLoading ? "Searching…" : "Search"}
-              </button>
-              <button
-                type="button"
-                onClick={clearInventoryFilters}
-                disabled={inventoryLoading}
-                className="rounded-lg border border-zinc-700 px-4 py-2 text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:opacity-60"
-              >
-                Clear Filters
-              </button>
-            </div>
-          </form>
+          <InventoryFiltersForm
+            filters={filterForm}
+            inventoryLoading={inventoryLoading}
+            onApply={applyInventoryFilters}
+            onClear={clearInventoryFilters}
+            onUpdate={updateFilter}
+          />
 
-          {inventoryLoading && (
-            <p className="text-sm text-zinc-500">Loading inventory…</p>
-          )}
-          {inventoryError && (
-            <p role="alert" className="text-sm text-red-400">
-              {inventoryError}
-            </p>
-          )}
-          {inventoryAuthRequired && (
-            <p className="text-sm text-zinc-400">
-              Please{" "}
-              <Link href="/login" className="text-green-400 hover:text-green-300">
-                log in
-              </Link>{" "}
-              to view your inventory.
-            </p>
-          )}
-          {!inventoryLoading &&
-            !inventoryError &&
-            !inventoryAuthRequired &&
-            inventory.length === 0 && (
-            <p className="text-sm text-zinc-500">
-              {Object.values(appliedFilters).some(Boolean)
-                ? "No cards match these filters."
-                : "No saved cards yet."}
-            </p>
-            )}
-
-          {inventory.length > 0 && (
-            <div className="space-y-4">
-              {inventory.map((card) => (
-                <div
-                  key={card.id}
-                  className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"
-                >
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-3">
-                      {card.image_url && (
-                        // Signed URLs are short-lived and generated at runtime.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={card.image_url}
-                          alt={`${card.card_name} card`}
-                          className="h-20 w-16 rounded-md border border-zinc-700 object-cover"
-                        />
-                      )}
-                      <div className="min-w-0">
-                        <p className="break-words font-semibold text-lg">
-                          {card.card_name}
-                        </p>
-                        <p className="break-words text-zinc-400">
-                          {card.set} • {card.rarity}
-                        </p>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {card.detected_game}
-                        </p>
-                        <p className="text-green-400 mt-2">
-                          {card.suggested_price}
-                        </p>
-                        <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">
-                          {card.status}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex-shrink-0 sm:text-right">
-                      <div className="text-sm text-zinc-500">#{card.card_number}</div>
-                      <button
-                        type="button"
-                        onClick={() => startEditing(card)}
-                        disabled={editSavingId === card.id || removingCardId === card.id}
-                        className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-green-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDraftCardId(card.id)}
-                        disabled={
-                          editSavingId === card.id || removingCardId === card.id
-                        }
-                        className="mt-2 block w-full rounded-md border border-green-700/60 px-3 py-1.5 text-sm text-green-300 transition hover:border-green-500 hover:text-green-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Generate Draft
-                      </button>
-                      {card.status !== "archived" && (
-                        <button
-                          type="button"
-                          onClick={() => archiveCard(card.id)}
-                          disabled={
-                            editSavingId === card.id || removingCardId === card.id
-                          }
-                          className="mt-2 block w-full rounded-md border border-amber-600/40 px-3 py-1.5 text-sm text-amber-300 transition hover:border-amber-400 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {removingCardId === card.id &&
-                          removalAction === "archive"
-                            ? "Archiving…"
-                            : "Archive"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => deleteCard(card.id)}
-                        disabled={editSavingId === card.id || removingCardId === card.id}
-                        className="mt-2 block w-full rounded-md border border-red-700/50 px-3 py-1.5 text-sm text-red-300 transition hover:border-red-500 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {removingCardId === card.id && removalAction === "delete"
-                          ? "Deleting…"
-                          : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {draftCardId === card.id && (
-                    <ListingDraftPanel
-                      cardId={card.id}
-                      cardGame={card.detected_game}
-                      cardName={card.card_name}
-                      cardImageUrl={card.image_url}
-                      cardSet={card.set}
-                      cardNumber={card.card_number}
-                      cardRarity={card.rarity}
-                      cardCondition={card.condition_guess}
-                      onClose={() => setDraftCardId(null)}
-                    />
-                  )}
-
-                  {editingCardId === card.id && editForm && (
-                    <div className="mt-4 border-t border-zinc-800 pt-4">
-                      <p className="mb-3 text-sm text-zinc-400">
-                        Update the saved inventory details.
-                      </p>
-
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Game</span>
-                          <select
-                            value={editForm.detected_game}
-                            onChange={(event) =>
-                              updateEditField(
-                                "detected_game",
-                                event.target.value as DetectedGame,
-                              )
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          >
-                            {SUPPORTED_GAMES.map((game) => (
-                              <option key={game} value={game}>
-                                {game}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Card Name</span>
-                          <input
-                            value={editForm.card_name}
-                            onChange={(event) =>
-                              updateEditField("card_name", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Set</span>
-                          <input
-                            value={editForm.set}
-                            onChange={(event) =>
-                              updateEditField("set", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Card Number</span>
-                          <input
-                            value={editForm.card_number}
-                            onChange={(event) =>
-                              updateEditField("card_number", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Rarity</span>
-                          <input
-                            value={editForm.rarity}
-                            onChange={(event) =>
-                              updateEditField("rarity", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Condition</span>
-                          <input
-                            value={editForm.condition_guess}
-                            onChange={(event) =>
-                              updateEditField("condition_guess", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Price</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={editForm.price_amount}
-                            onChange={(event) =>
-                              updateEditField("price_amount", event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Currency</span>
-                          <input
-                            value={editForm.currency}
-                            maxLength={3}
-                            onChange={(event) =>
-                              updateEditField("currency", event.target.value.toUpperCase())
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-zinc-400">Status</span>
-                          <select
-                            value={editForm.status}
-                            onChange={(event) =>
-                              updateEditField(
-                                "status",
-                                event.target.value as InventoryCard["status"],
-                              )
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
-                          >
-                            {CARD_STATUSES.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="mt-4 flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => saveEdit(card.id)}
-                          disabled={editSavingId === card.id}
-                          className="rounded-lg bg-green-500 px-4 py-2 font-semibold text-black transition hover:bg-green-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-                        >
-                          {editSavingId === card.id ? "Saving…" : "Save Changes"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={cancelEditing}
-                          disabled={editSavingId === card.id}
-                          className="rounded-lg border border-zinc-700 px-4 py-2 text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:opacity-60"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-
-                      {editError && (
-                        <p role="alert" className="mt-3 text-sm text-red-400">
-                          {editError}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {editSuccessId === card.id && editingCardId !== card.id && (
-                    <p className="mt-3 text-sm text-green-400">
-                      Inventory card updated.
-                    </p>
-                  )}
-                  {removalError && removalErrorCardId === card.id && (
-                    <p role="alert" className="mt-3 text-sm text-red-400">
-                      {removalError}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          <InventoryList
+            inventory={inventory}
+            inventoryLoading={inventoryLoading}
+            inventoryError={inventoryError}
+            inventoryAuthRequired={inventoryAuthRequired}
+            appliedFilters={appliedFilters}
+            draftCardId={draftCardId}
+            editingCardId={editingCardId}
+            editForm={editForm}
+            editSavingId={editSavingId}
+            editError={editError}
+            editSuccessId={editSuccessId}
+            removingCardId={removingCardId}
+            removalAction={removalAction}
+            removalError={removalError}
+            removalErrorCardId={removalErrorCardId}
+            onStartEditing={startEditing}
+            onUpdateEditField={updateEditField}
+            onSaveEdit={saveEdit}
+            onCancelEditing={cancelEditing}
+            onOpenDrafts={setDraftCardId}
+            onCloseDrafts={() => setDraftCardId(null)}
+            onArchive={archiveCard}
+            onDelete={deleteCard}
+          />
         </div>
       </div>
     </main>
