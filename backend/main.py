@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from app_config import AppSettings
 from auth import AuthenticatedUser, get_current_user
+from card_detection_api import router as card_detection_router
 from card_models import CardCreate
 from cards_api import router as cards_router
 from image_validation import read_validated_image
@@ -24,6 +25,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
 app.include_router(cards_router)
+app.include_router(card_detection_router)
 app.include_router(listing_router)
 
 app.add_middleware(

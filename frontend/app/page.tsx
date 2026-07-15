@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AnalysisReview } from "./components/analysis-review";
 import { AuthStatus } from "./components/auth-status";
+import { BulkDetectionPreview } from "./components/bulk-detection-preview";
 import { InventoryFiltersForm } from "./components/inventory-filters";
 import { InventoryList } from "./components/inventory-list";
 import { UploadPanel } from "./components/upload-panel";
@@ -391,6 +392,8 @@ export default function Home() {
             onSave={saveCard}
           />
         )}
+
+        <BulkDetectionPreview />
 
         <div className="mt-8">
           <h2 className="text-2xl font-bold mb-4">Inventory History</h2>
